@@ -133,9 +133,9 @@ PyPreprocessingModel::do_predict(std::unique_ptr<PyPreprocessingModelInput> inpu
     grpc::ClientContext client_context;
     agrpc::GrpcContext& grpc_context = GrpcClientContextPool::get_instance().get_next();
     grpc::Status status;
-    const auto reader = agrpcx::request(&Predict::Stub::AsyncPredict, *context_->stub_,
-                                        client_context, input->request, grpc_context);
-    co_await agrpcx::finish(reader, output->reply, status, boost::asio::use_awaitable);
+    const auto reader = agrpc::request(&Predict::Stub::AsyncPredict, *context_->stub_,
+                                       client_context, input->request, grpc_context);
+    co_await agrpc::finish(reader, output->reply, status, boost::asio::use_awaitable);
     if (!status.ok())
         co_return absl::FailedPreconditionError(fmt::format("preprocessing failed: {}", status.error_message()));
     co_return output;

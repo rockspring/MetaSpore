@@ -24,24 +24,10 @@
 #error "Neither <agrpc/asioGrpc.hpp> nor <agrpc/asio_grpc.hpp> is available"
 #endif
 
-namespace metaspore::serving::agrpcx {
+#if __has_include(<agrpc/request.hpp>)
+#include <agrpc/request.hpp>
+#endif
 
-template <typename... Args>
-auto request(Args &&...args) {
-    if constexpr (requires { agrpc::request(std::forward<Args>(args)...); }) {
-        return agrpc::request(std::forward<Args>(args)...);
-    } else {
-        return agrpc::b::request(std::forward<Args>(args)...);
-    }
-}
-
-template <typename... Args>
-auto finish(Args &&...args) {
-    if constexpr (requires { agrpc::finish(std::forward<Args>(args)...); }) {
-        return agrpc::finish(std::forward<Args>(args)...);
-    } else {
-        return agrpc::b::finish(std::forward<Args>(args)...);
-    }
-}
-
-} // namespace metaspore::serving::agrpcx
+#if __has_include(<agrpc/finish.hpp>)
+#include <agrpc/finish.hpp>
+#endif

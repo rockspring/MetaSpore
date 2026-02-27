@@ -17,7 +17,7 @@
 #pragma once
 
 #include <common/types.h>
-#include <boost/process/child.hpp>
+#include <boost/process.hpp>
 
 namespace metaspore::serving {
 
