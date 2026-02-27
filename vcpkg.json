@@ -10,12 +10,7 @@
         "boost-system",
         "boost-uuid",
         "boost-spirit",
-        {
-            "name": "asio-grpc",
-            "features": [
-                "boost-container"
-            ]
-        },
+        "asio-grpc",
         "protobuf",
         "fmt",
         "spdlog",
