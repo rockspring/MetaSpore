@@ -44,6 +44,16 @@ using namespace std::string_literals;
 using channel_type =
     boost::asio::experimental::concurrent_channel<void(boost::system::error_code, cp::ExecBatch)>;
 
+template <typename TPlan>
+arrow::Status StartProducingCompat(TPlan *plan) {
+    if constexpr (std::is_void_v<decltype(plan->StartProducing())>) {
+        plan->StartProducing();
+        return arrow::Status::OK();
+    } else {
+        return plan->StartProducing();
+    }
+}
+
 class MSSourceNodeOptions : public ac::SourceNodeOptions {
   public:
     MSSourceNodeOptions(
@@ -200,6 +210,15 @@ struct SinkConsumer : public ac::SinkNodeConsumer {
     SinkConsumer(std::shared_ptr<arrow::Schema> schema, channel_type &ch, arrow::Future<> fut)
         : output_schema_(schema), channel_(ch), fut_(std::move(fut)) {}
 
+    arrow::Status Init(const std::shared_ptr<arrow::Schema> &schema,
+                       ac::BackpressureControl *backpressure_control,
+                       ac::ExecPlan *plan) override {
+        (void)schema;
+        (void)backpressure_control;
+        (void)plan;
+        return arrow::Status::OK();
+    }
+
     arrow::Status Consume(cp::ExecBatch batch) override {
         bool s = channel_.try_send(boost::system::error_code(), std::move(batch));
         if (!s) {
@@ -234,11 +253,7 @@ status FeatureComputeExec::build_plan(std::shared_ptr<FeatureComputeExecContext>
     CALL_AND_RETURN_IF_STATUS_NOT_OK(plan->Validate());
     SPDLOG_DEBUG("FeatureComputeExec created plan {}", plan->ToString());
     // start the ExecPlan
-    if constexpr (std::is_same_v<decltype(plan->StartProducing()), arrow::Status>) {
-        CALL_AND_RETURN_IF_STATUS_NOT_OK(plan->StartProducing());
-    } else {
-        plan->StartProducing();
-    }
+    CALL_AND_RETURN_IF_STATUS_NOT_OK(StartProducingCompat(plan.get()));
     ctx->plan_ = plan;
     return absl::OkStatus();
 }
