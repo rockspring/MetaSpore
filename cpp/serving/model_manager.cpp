@@ -37,7 +37,7 @@ void ModelManager::init(const std::string &dir_path) {
     // scan all subdirs and try to load them
     namespace fs = std::filesystem;
     auto d = fs::path(dir_path);
-    spdlog::info("Scan {} and load model", fs::absolute(d));
+    spdlog::info("Scan {} and load model", fs::absolute(d).string());
     std::vector<std::future<void>> futures;
     for (const auto &dir_entry : fs::directory_iterator(d)) {
         if (dir_entry.is_directory()) {
@@ -47,12 +47,12 @@ void ModelManager::init(const std::string &dir_path) {
                                                auto sub_dir = dir_entry.path();
                                                auto name = dir_entry.path().filename();
                                                spdlog::info("ModelManager: Try to load model from {} with name {} during init",
-                                                            sub_dir, name);
+                                                            sub_dir.string(), name.string());
                                                auto s = co_await load(dir_entry.path(), dir_entry.path().filename());
                                                if (!s.ok()) {
                                                    spdlog::info(
                                                        "ModelManager: Load model from {} during init failed {}, ignored",
-                                                       sub_dir, s);
+                                                       sub_dir.string(), s.ToString());
                                                }
                                            },
                                            boost::asio::use_future);
@@ -74,7 +74,7 @@ awaitable_status ModelManager::load(const std::string &dir_path, const std::stri
                 auto status = co_await model.load(dir_path);
                 if (!status.ok()) {
                     spdlog::error("ModelManager: Cannot load TabularModel {} from {}: {}", name,
-                                  dir_path, status);
+                                  dir_path, status.ToString());
                     co_return status;
                 }
                 auto runner = std::make_shared<GrpcTabularModelRunner>();
@@ -93,7 +93,7 @@ awaitable_status ModelManager::load(const std::string &dir_path, const std::stri
                 auto status = co_await model.load(dir_path);
                 if (!status.ok()) {
                     spdlog::error("ModelManager: Cannot load PyPreprocessingOrtModel {} from {}: {}", name,
-                                  dir_path, status);
+                                  dir_path, status.ToString());
                     co_return status;
                 }
                 auto runner = std::make_shared<GrpcPreprocessingOrtModelRunner>();
@@ -112,7 +112,7 @@ awaitable_status ModelManager::load(const std::string &dir_path, const std::stri
                 auto status = co_await model.load(dir_path);
                 if (!status.ok()) {
                     spdlog::error("ModelManager: Cannot load OrtModel {} from {}: {}", name,
-                                  dir_path, status);
+                                  dir_path, status.ToString());
                     co_return status;
                 }
                 auto runner = std::make_shared<GrpcOrtModelRunner>();
@@ -137,7 +137,7 @@ awaitable_status ModelManager::load(const std::string &dir_path, const std::stri
             if (status.ok())
                 co_return status;
             spdlog::error("ModelManager: Cannot load model {} from {}: {}", name,
-                          dir_path, status);
+                          dir_path, status.ToString());
             co_return status;
         },
         boost::asio::use_awaitable);

@@ -20,6 +20,7 @@
 #include <serving/grpc_server.h>
 #include <serving/grpc_server_shutdown.h>
 #include <serving/model_manager.h>
+#include <serving/agrpc_compat.h>
 #include <metaspore/string_utils.h>
 
 #include <fmt/format.h>
@@ -70,83 +71,99 @@ GrpcServer::GrpcServer(GrpcServer &&) = default;
 
 awaitable<void> respond_error(grpc::ServerAsyncResponseWriter<PredictReply> &writer,
                               const status &s) {
-    co_await agrpc::finish_with_error(
-        writer, grpc::Status(static_cast<grpc::StatusCode>(s.code()), s.ToString()),
-        boost::asio::use_awaitable);
+    PredictReply reply;
+    co_await agrpc::finish(writer, reply,
+                           grpc::Status(static_cast<grpc::StatusCode>(s.code()), s.ToString()),
+                           boost::asio::use_awaitable);
+    co_return;
 }
 
 awaitable<void> respond_error(grpc::ServerAsyncResponseWriter<LoadReply> &writer,
                               const status &s) {
-    co_await agrpc::finish_with_error(
-        writer, grpc::Status(static_cast<grpc::StatusCode>(s.code()), s.ToString()),
-        boost::asio::use_awaitable);
+    LoadReply reply;
+    co_await agrpc::finish(writer, reply,
+                           grpc::Status(static_cast<grpc::StatusCode>(s.code()), s.ToString()),
+                           boost::asio::use_awaitable);
+    co_return;
 }
 
 void register_predict_request_handler(agrpc::GrpcContext &grpc_context,
                                       Predict::AsyncService &predict_service,
                                       GrpcServerShutdown &server_shutdown)
 {
-    agrpc::repeatedly_request(
-        &Predict::AsyncService::RequestPredict, predict_service,
-        boost::asio::bind_executor(
-            grpc_context,
-            [&](grpc::ServerContext &ctx, PredictRequest &req,
-                grpc::ServerAsyncResponseWriter<PredictReply> &writer) -> awaitable<void> {
-                auto find_model = ModelManager::get_model_manager().get_model(req.model_name());
-                if (!find_model.ok()) {
-                    co_await respond_error(writer, find_model.status());
-                } else {
-                    // convert grpc to fe input
-                    std::string ex;
-                    try {
-                        auto reply_result = co_await(*find_model)->predict(req);
-                        if (!reply_result.ok()) {
-                            co_await respond_error(writer, reply_result.status());
-                        } else {
-                            co_await agrpc::finish(writer, *reply_result, grpc::Status::OK,
-                                                   boost::asio::use_awaitable);
-                        }
-                    } catch (const std::exception &e) {
-                        // unknown exception
-                        ex = e.what();
-                    }
-                    if (!ex.empty())
-                        co_await respond_error(writer, absl::UnknownError(std::move(ex)));
-                }
+    auto loop = [&]() -> awaitable<void> {
+        for (;;) {
+            grpc::ServerContext ctx;
+            PredictRequest req;
+            grpc::ServerAsyncResponseWriter<PredictReply> writer(&ctx);
+            const bool ok = co_await agrpc::request(&Predict::AsyncService::RequestPredict,
+                                                    predict_service, ctx, req, writer,
+                                                    grpc_context, boost::asio::use_awaitable);
+            if (!ok) {
                 co_return;
-            }));
+            }
+
+            auto find_model = ModelManager::get_model_manager().get_model(req.model_name());
+            if (!find_model.ok()) {
+                co_await respond_error(writer, find_model.status());
+                continue;
+            }
+            std::string ex;
+            try {
+                auto reply_result = co_await (*find_model)->predict(req);
+                if (!reply_result.ok()) {
+                    co_await respond_error(writer, reply_result.status());
+                } else {
+                    co_await agrpc::finish(writer, *reply_result, grpc::Status::OK,
+                                           boost::asio::use_awaitable);
+                }
+            } catch (const std::exception &e) {
+                ex = e.what();
+            }
+            if (!ex.empty()) {
+                co_await respond_error(writer, absl::UnknownError(std::move(ex)));
+            }
+        }
+    };
+    boost::asio::co_spawn(grpc_context, loop(), boost::asio::detached);
 }
 
 void register_load_request_handler(agrpc::GrpcContext &grpc_context,
                                    Load::AsyncService &load_service,
                                    GrpcServerShutdown &server_shutdown)
 {
-    agrpc::repeatedly_request(
-        &Load::AsyncService::RequestLoad, load_service,
-        boost::asio::bind_executor(
-            grpc_context,
-            [&](grpc::ServerContext &ctx, LoadRequest &req,
-                grpc::ServerAsyncResponseWriter<LoadReply> &writer) -> awaitable<void> {
-                const std::string &model_name = req.model_name();
-                const std::string &version = req.version();
-                const std::string &dir_path = req.dir_path();
-                std::string desc = " model " + metaspore::ToSource(model_name) +
-                                   " version " + metaspore::ToSource(version) +
-                                   " from " + metaspore::ToSource(dir_path) + ".";
-                spdlog::info("Loading" + desc);
-                auto status = co_await ModelManager::get_model_manager().load(dir_path, model_name);
-                if (!status.ok()) {
-                    spdlog::error("Fail to load" + desc);
-                    co_await respond_error(writer, status);
-                } else {
-                    LoadReply reply;
-                    reply.set_msg("Successfully loaded" + desc);
-                    spdlog::info(reply.msg());
-                    co_await agrpc::finish(writer, reply, grpc::Status::OK,
-                                           boost::asio::use_awaitable);
-                }
+    auto loop = [&]() -> awaitable<void> {
+        for (;;) {
+            grpc::ServerContext ctx;
+            LoadRequest req;
+            grpc::ServerAsyncResponseWriter<LoadReply> writer(&ctx);
+            const bool ok = co_await agrpc::request(&Load::AsyncService::RequestLoad, load_service,
+                                                    ctx, req, writer, grpc_context,
+                                                    boost::asio::use_awaitable);
+            if (!ok) {
                 co_return;
-            }));
+            }
+
+            const std::string &model_name = req.model_name();
+            const std::string &version = req.version();
+            const std::string &dir_path = req.dir_path();
+            std::string desc = " model " + metaspore::ToSource(model_name) +
+                               " version " + metaspore::ToSource(version) +
+                               " from " + metaspore::ToSource(dir_path) + ".";
+            spdlog::info("Loading" + desc);
+            auto status = co_await ModelManager::get_model_manager().load(dir_path, model_name);
+            if (!status.ok()) {
+                spdlog::error("Fail to load" + desc);
+                co_await respond_error(writer, status);
+            } else {
+                LoadReply reply;
+                reply.set_msg("Successfully loaded" + desc);
+                spdlog::info(reply.msg());
+                co_await agrpc::finish(writer, reply, grpc::Status::OK, boost::asio::use_awaitable);
+            }
+        }
+    };
+    boost::asio::co_spawn(grpc_context, loop(), boost::asio::detached);
 }
 
 void GrpcServer::run() {
