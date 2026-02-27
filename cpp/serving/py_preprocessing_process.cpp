@@ -15,9 +15,7 @@
 //
 
 #include <filesystem>
-#include <boost/process/system.hpp>
-#include <boost/process/pipe.hpp>
-#include <boost/process/io.hpp>
+#include <boost/process.hpp>
 #include <metaspore/string_utils.h>
 #include <serving/py_preprocessing_process.h>
 

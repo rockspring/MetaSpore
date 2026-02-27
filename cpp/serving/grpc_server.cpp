@@ -72,18 +72,18 @@ GrpcServer::GrpcServer(GrpcServer &&) = default;
 awaitable<void> respond_error(grpc::ServerAsyncResponseWriter<PredictReply> &writer,
                               const status &s) {
     PredictReply reply;
-    co_await agrpc::finish(writer, reply,
-                           grpc::Status(static_cast<grpc::StatusCode>(s.code()), s.ToString()),
-                           boost::asio::use_awaitable);
+    co_await agrpcx::finish(writer, reply,
+                            grpc::Status(static_cast<grpc::StatusCode>(s.code()), s.ToString()),
+                            boost::asio::use_awaitable);
     co_return;
 }
 
 awaitable<void> respond_error(grpc::ServerAsyncResponseWriter<LoadReply> &writer,
                               const status &s) {
     LoadReply reply;
-    co_await agrpc::finish(writer, reply,
-                           grpc::Status(static_cast<grpc::StatusCode>(s.code()), s.ToString()),
-                           boost::asio::use_awaitable);
+    co_await agrpcx::finish(writer, reply,
+                            grpc::Status(static_cast<grpc::StatusCode>(s.code()), s.ToString()),
+                            boost::asio::use_awaitable);
     co_return;
 }
 
@@ -96,9 +96,9 @@ void register_predict_request_handler(agrpc::GrpcContext &grpc_context,
             grpc::ServerContext ctx;
             PredictRequest req;
             grpc::ServerAsyncResponseWriter<PredictReply> writer(&ctx);
-            const bool ok = co_await agrpc::request(&Predict::AsyncService::RequestPredict,
-                                                    predict_service, ctx, req, writer,
-                                                    grpc_context, boost::asio::use_awaitable);
+            const bool ok = co_await agrpcx::request(&Predict::AsyncService::RequestPredict,
+                                                     predict_service, ctx, req, writer,
+                                                     grpc_context, boost::asio::use_awaitable);
             if (!ok) {
                 co_return;
             }
@@ -114,8 +114,8 @@ void register_predict_request_handler(agrpc::GrpcContext &grpc_context,
                 if (!reply_result.ok()) {
                     co_await respond_error(writer, reply_result.status());
                 } else {
-                    co_await agrpc::finish(writer, *reply_result, grpc::Status::OK,
-                                           boost::asio::use_awaitable);
+                    co_await agrpcx::finish(writer, *reply_result, grpc::Status::OK,
+                                            boost::asio::use_awaitable);
                 }
             } catch (const std::exception &e) {
                 ex = e.what();
@@ -137,9 +137,9 @@ void register_load_request_handler(agrpc::GrpcContext &grpc_context,
             grpc::ServerContext ctx;
             LoadRequest req;
             grpc::ServerAsyncResponseWriter<LoadReply> writer(&ctx);
-            const bool ok = co_await agrpc::request(&Load::AsyncService::RequestLoad, load_service,
-                                                    ctx, req, writer, grpc_context,
-                                                    boost::asio::use_awaitable);
+            const bool ok = co_await agrpcx::request(&Load::AsyncService::RequestLoad, load_service,
+                                                     ctx, req, writer, grpc_context,
+                                                     boost::asio::use_awaitable);
             if (!ok) {
                 co_return;
             }
@@ -159,7 +159,7 @@ void register_load_request_handler(agrpc::GrpcContext &grpc_context,
                 LoadReply reply;
                 reply.set_msg("Successfully loaded" + desc);
                 spdlog::info(reply.msg());
-                co_await agrpc::finish(writer, reply, grpc::Status::OK, boost::asio::use_awaitable);
+                co_await agrpcx::finish(writer, reply, grpc::Status::OK, boost::asio::use_awaitable);
             }
         }
     };
