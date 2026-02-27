@@ -31,8 +31,8 @@ struct StringBKDRHashState : public cp::KernelState {
     uint64_t seed = 0;
 };
 
-arrow::Status StringBKDRHashKernelString(cp::KernelContext *ctx, const cp::ExecBatch &batch,
-                                         arrow::Datum *out) {
+arrow::Status StringBKDRHashKernelStringLegacy(cp::KernelContext *ctx, const cp::ExecBatch &batch,
+                                               arrow::Datum *out) {
     const StringBKDRHashState *state = (const StringBKDRHashState *)ctx->state();
     auto input_array = batch[0].array_as<arrow::StringArray>();
     arrow::UInt64Builder builder;
@@ -55,8 +55,8 @@ arrow::Status StringBKDRHashKernelString(cp::KernelContext *ctx, const cp::ExecB
     return arrow::Status::OK();
 }
 
-arrow::Status StringBKDRHashKernelListString(cp::KernelContext *ctx, const cp::ExecBatch &batch,
-                                             arrow::Datum *out) {
+arrow::Status StringBKDRHashKernelListStringLegacy(cp::KernelContext *ctx, const cp::ExecBatch &batch,
+                                                   arrow::Datum *out) {
     const StringBKDRHashState *state = (const StringBKDRHashState *)ctx->state();
     auto input_array = batch[0].array_as<arrow::ListArray>();
     auto value_builder = std::make_shared<arrow::UInt64Builder>();
@@ -128,15 +128,30 @@ arrow::Status AddStringBKDRHashFunction() {
         state->seed = BKDRHashWithEqualPostfix(name.c_str(), name.length(), 0);
         return state;
     };
+    auto string_kernel_exec = [](cp::KernelContext *ctx, const cp::ExecSpan &batch,
+                                 cp::ExecResult *out) -> arrow::Status {
+        arrow::Datum legacy_out;
+        ARROW_RETURN_NOT_OK(StringBKDRHashKernelStringLegacy(ctx, batch.ToExecBatch(), &legacy_out));
+        out->value = legacy_out.array();
+        return arrow::Status::OK();
+    };
     cp::ScalarKernel string_kernel(std::vector<cp::InputType>{cp::InputType(arrow::utf8())},
                                    cp::OutputType(arrow::uint64()),
-                                   /* exec = */ StringBKDRHashKernelString,
+                                   /* exec = */ string_kernel_exec,
                                    /* init = */ initfn);
     string_kernel.can_write_into_slices = false;
+    auto string_list_kernel_exec = [](cp::KernelContext *ctx, const cp::ExecSpan &batch,
+                                      cp::ExecResult *out) -> arrow::Status {
+        arrow::Datum legacy_out;
+        ARROW_RETURN_NOT_OK(
+            StringBKDRHashKernelListStringLegacy(ctx, batch.ToExecBatch(), &legacy_out));
+        out->value = legacy_out.array();
+        return arrow::Status::OK();
+    };
     cp::ScalarKernel string_list_kernel(
         std::vector<cp::InputType>{cp::InputType(arrow::list(arrow::utf8()))},
         cp::OutputType(arrow::list(arrow::uint64())),
-        /* exec = */ StringBKDRHashKernelListString,
+        /* exec = */ string_list_kernel_exec,
         /* init = */ initfn);
     string_list_kernel.can_write_into_slices = false;
     auto func = std::make_shared<cp::ScalarFunction>("bkdr_hash", cp::Arity::Unary(),
@@ -155,8 +170,8 @@ static const cp::FunctionDoc bkdr_hash_combine_func_doc{
 
 template <typename T> using Container = std::vector<T>;
 
-arrow::Status BKDRHashCombineKernelListUInt64(cp::KernelContext *ctx, const cp::ExecBatch &batch,
-                                              arrow::Datum *out) {
+arrow::Status BKDRHashCombineKernelListUInt64Legacy(cp::KernelContext *ctx, const cp::ExecBatch &batch,
+                                                    arrow::Datum *out) {
     Container<std::shared_ptr<arrow::Array>> arrays;
     for (const auto &v : batch.values) {
         if (!v.is_array()) {
@@ -198,11 +213,19 @@ arrow::Status BKDRHashCombineKernelListUInt64(cp::KernelContext *ctx, const cp::
 
 arrow::Status AddBKDRHashCombineFunction() {
     cp::FunctionRegistry *registry = cp::GetFunctionRegistry();
+    auto combine_kernel_exec = [](cp::KernelContext *ctx, const cp::ExecSpan &batch,
+                                  cp::ExecResult *out) -> arrow::Status {
+        arrow::Datum legacy_out;
+        ARROW_RETURN_NOT_OK(
+            BKDRHashCombineKernelListUInt64Legacy(ctx, batch.ToExecBatch(), &legacy_out));
+        out->value = legacy_out.array();
+        return arrow::Status::OK();
+    };
     cp::ScalarKernel kernel(
         cp::KernelSignature::Make({cp::InputType::Any()},
                                   cp::OutputType(arrow::list(arrow::uint64())),
                                   /* is_varargs = */ true),
-        /* exec = */ BKDRHashCombineKernelListUInt64);
+        /* exec = */ combine_kernel_exec);
     kernel.can_write_into_slices = false;
     auto func = std::make_shared<cp::ScalarFunction>("bkdr_hash_combine", cp::Arity::VarArgs(1),
                                                      bkdr_hash_combine_func_doc);

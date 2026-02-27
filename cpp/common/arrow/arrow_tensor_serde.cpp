@@ -32,7 +32,7 @@ ArrowTensorSerde::deserialize_from(const std::string &name, metaspore::serving::
     }
     const std::string &buffer = find->second;
     ASSIGN_RESULT_OR_RETURN_NOT_OK(auto reader,
-                                   arrow::Buffer::GetReader(arrow::Buffer::Wrap(buffer)));
+                                   arrow::Buffer::GetReader(arrow::Buffer::Wrap(buffer.data(), buffer.size())));
     ASSIGN_RESULT_OR_RETURN_NOT_OK(auto tensor, arrow::ipc::ReadTensor(reader.get()));
     return tensor;
 }
@@ -45,7 +45,7 @@ ArrowTensorSerde::deserialize_from(const std::string &name, metaspore::serving::
     }
     const std::string &buffer = find->second;
     ASSIGN_RESULT_OR_RETURN_NOT_OK(auto reader,
-                                   arrow::Buffer::GetReader(arrow::Buffer::Wrap(buffer)));
+                                   arrow::Buffer::GetReader(arrow::Buffer::Wrap(buffer.data(), buffer.size())));
     ASSIGN_RESULT_OR_RETURN_NOT_OK(auto tensor, arrow::ipc::ReadTensor(reader.get()));
     return tensor;
 }

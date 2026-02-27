@@ -30,6 +30,10 @@
 #include <arrow/compute/api.h>
 #include <arrow/util/async_generator.h>
 
+#include <optional>
+#include <type_traits>
+#include <variant>
+
 namespace cp = arrow::compute;
 namespace ac = metaspore::arrow_exec;
 
@@ -38,13 +42,13 @@ namespace metaspore {
 using namespace std::string_literals;
 
 using channel_type =
-    boost::asio::experimental::concurrent_channel<void(boost::system::error_code, ac::ExecBatch)>;
+    boost::asio::experimental::concurrent_channel<void(boost::system::error_code, cp::ExecBatch)>;
 
 class MSSourceNodeOptions : public ac::SourceNodeOptions {
   public:
     MSSourceNodeOptions(
         const std::string &name_, std::shared_ptr<arrow::Schema> output_schema,
-        std::function<arrow::Future<arrow::util::optional<ac::ExecBatch>>()> generator)
+        std::function<arrow::Future<std::optional<cp::ExecBatch>>()> generator)
         : ac::SourceNodeOptions(output_schema, generator), name(name_) {}
     std::string name;
 };
@@ -52,7 +56,7 @@ class MSSourceNodeOptions : public ac::SourceNodeOptions {
 class FeatureComputeExecContext {
   public:
     std::unordered_map<std::string, std::shared_ptr<MSSourceNodeOptions>> name_source_map_;
-    std::unordered_map<std::string, arrow::PushGenerator<arrow::util::optional<ac::ExecBatch>>>
+    std::unordered_map<std::string, arrow::PushGenerator<std::optional<cp::ExecBatch>>>
         name_gen_map_;
     std::shared_ptr<ac::Declaration> root_decl_;
     ac::ExecNode *root_node_{nullptr};
@@ -140,7 +144,7 @@ static void find_source_node(std::shared_ptr<FeatureComputeExecContext> &ctx,
         ctx->name_source_map_.emplace(source_option->name, source_option_copied);
     }
     for (auto &input : decl.inputs) {
-        find_source_node(ctx, arrow::util::get<ac::Declaration>(input));
+        find_source_node(ctx, std::get<ac::Declaration>(input));
     }
 }
 
@@ -163,8 +167,8 @@ status FeatureComputeExec::set_input_schema(std::shared_ptr<FeatureComputeExecCo
     // set schema when the first input arrived
     auto source_option = find->second;
     source_option->output_schema = schema;
-    auto pair = ctx->name_gen_map_.emplace(
-        source_name, arrow::PushGenerator<arrow::util::optional<ac::ExecBatch>>{});
+    auto pair =
+        ctx->name_gen_map_.emplace(source_name, arrow::PushGenerator<std::optional<cp::ExecBatch>>{});
     source_option->generator = pair.first->second;
     return absl::OkStatus();
 }
@@ -177,16 +181,15 @@ status FeatureComputeExec::feed_input(std::shared_ptr<FeatureComputeExecContext>
         return absl::NotFoundError(
             fmt::format("FeatureComputeExec feed_input with non-exist name {}", source_name));
     }
-    ac::ExecBatch exec_batch(*batch);
-    source->second.producer().Push(
-        arrow::util::make_optional<ac::ExecBatch>(std::move(exec_batch)));
+    cp::ExecBatch exec_batch(*batch);
+    source->second.producer().Push(std::make_optional<cp::ExecBatch>(std::move(exec_batch)));
     return absl::OkStatus();
 }
 
 awaitable_result<std::shared_ptr<arrow::RecordBatch>>
 FeatureComputeExec::execute(std::shared_ptr<FeatureComputeExecContext> &ctx) const {
     finish_join(ctx->root_node_);
-    ac::ExecBatch exec_batch = co_await ctx->channel_.async_receive(boost::asio::use_awaitable);
+    cp::ExecBatch exec_batch = co_await ctx->channel_.async_receive(boost::asio::use_awaitable);
     ASSIGN_RESULT_OR_CO_RETURN_NOT_OK(
         auto rb_result, exec_batch.ToRecordBatch(ctx->root_before_sink_node_->output_schema()));
     co_return rb_result;
@@ -197,7 +200,7 @@ struct SinkConsumer : public ac::SinkNodeConsumer {
     SinkConsumer(std::shared_ptr<arrow::Schema> schema, channel_type &ch, arrow::Future<> fut)
         : output_schema_(schema), channel_(ch), fut_(std::move(fut)) {}
 
-    arrow::Status Consume(ac::ExecBatch batch) override {
+    arrow::Status Consume(cp::ExecBatch batch) override {
         bool s = channel_.try_send(boost::system::error_code(), std::move(batch));
         if (!s) {
             return arrow::Status::CapacityError("cannot consume batch and send to channel");
@@ -221,15 +224,21 @@ status FeatureComputeExec::build_plan(std::shared_ptr<FeatureComputeExecContext>
     ASSIGN_RESULT_OR_RETURN_NOT_OK(
         auto sink_result,
         ac::MakeExecNode("consuming_sink", plan.get(), {root_result},
-                         ac::ConsumingSinkNodeOptions{std::make_shared<SinkConsumer>(
-                             root_result->output_schema(), ctx->channel_, ctx->sink_future_)}));
+                         ac::ConsumingSinkNodeOptions(
+                             std::make_shared<SinkConsumer>(root_result->output_schema(),
+                                                            ctx->channel_, ctx->sink_future_),
+                             {}, std::nullopt)));
     ctx->root_node_ = sink_result;
 
     // validate the ExecPlan
     CALL_AND_RETURN_IF_STATUS_NOT_OK(plan->Validate());
     SPDLOG_DEBUG("FeatureComputeExec created plan {}", plan->ToString());
     // start the ExecPlan
-    CALL_AND_RETURN_IF_STATUS_NOT_OK(plan->StartProducing());
+    if constexpr (std::is_same_v<decltype(plan->StartProducing()), arrow::Status>) {
+        CALL_AND_RETURN_IF_STATUS_NOT_OK(plan->StartProducing());
+    } else {
+        plan->StartProducing();
+    }
     ctx->plan_ = plan;
     return absl::OkStatus();
 }
@@ -237,7 +246,7 @@ status FeatureComputeExec::build_plan(std::shared_ptr<FeatureComputeExecContext>
 status FeatureComputeExec::finish_plan(std::shared_ptr<FeatureComputeExecContext> &ctx) const {
     for (auto &[name, queue] : ctx->name_gen_map_) {
         // to trigger arrow source node finish its async future loop
-        queue.producer().Push(arrow::IterationTraits<arrow::util::optional<ac::ExecBatch>>::End());
+        queue.producer().Push(std::nullopt);
     }
     // context_->plan_->StopProducing();
     ctx->sink_future_.MarkFinished();
@@ -253,7 +262,12 @@ void FeatureComputeExec::finish_join(ac::ExecNode *node) const {
     for (auto input : node->inputs()) {
         if (input->label() == "join_node"s) {
             for (auto recurse_input : input->inputs()) {
-                input->InputFinished(recurse_input, 1);
+                if constexpr (std::is_same_v<decltype(input->InputFinished(recurse_input, 1)),
+                                             arrow::Status>) {
+                    (void)input->InputFinished(recurse_input, 1);
+                } else {
+                    input->InputFinished(recurse_input, 1);
+                }
             }
         }
         finish_join(input);

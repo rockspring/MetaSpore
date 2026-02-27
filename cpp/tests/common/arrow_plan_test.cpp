@@ -25,6 +25,8 @@
 #include <range/v3/view/transform.hpp>
 #include <spdlog/spdlog.h>
 
+#include <optional>
+
 #include <common/arrow/arrow_helpers.h>
 #include <common/arrow/arrow_exec_plan_compat.h>
 #include <common/threadpool.h>
@@ -33,14 +35,15 @@
 using namespace metaspore;
 using namespace std::string_literals;
 namespace ac = metaspore::arrow_exec;
+namespace cp = arrow::compute;
 
 using channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code,
-                                                                        ac::ExecBatch)>;
+                                                                        cp::ExecBatch)>;
 
 class FeatureComputeContext {
   public:
     struct InputSource {
-        arrow::PushGenerator<arrow::util::optional<ac::ExecBatch>> input_queue;
+        arrow::PushGenerator<std::optional<cp::ExecBatch>> input_queue;
         ac::ExecNode *node;
     };
 
@@ -76,9 +79,9 @@ absl::Status feed_input(std::unique_ptr<FeatureComputeContext> &context_,
         return absl::NotFoundError(
             fmt::format("FeatureComputeExec feed_input with non-exist name {}", source_name));
     }
-    ac::ExecBatch exec_batch(*batch);
+    cp::ExecBatch exec_batch(*batch);
     source->second.input_queue.producer().Push(
-        arrow::util::make_optional<ac::ExecBatch>(std::move(exec_batch)));
+        std::make_optional<cp::ExecBatch>(std::move(exec_batch)));
     return absl::OkStatus();
 }
 
@@ -125,7 +128,7 @@ struct SinkConsumer : public ac::SinkNodeConsumer {
     SinkConsumer(std::shared_ptr<arrow::Schema> schema, channel_type &ch, arrow::Future<> fut)
         : output_schema_(schema), channel_(ch), fut_(std::move(fut)) {}
 
-    arrow::Status Consume(ac::ExecBatch batch) override {
+    arrow::Status Consume(cp::ExecBatch batch) override {
         fmt::print("consuming batch\n");
         bool s = channel_.try_send(boost::system::error_code(), std::move(batch));
         if (!s) {
@@ -173,12 +176,12 @@ absl::Status finish_plan(std::unique_ptr<FeatureComputeContext> &context_) {
 
 absl::StatusOr<std::shared_ptr<arrow::RecordBatch>>
 get_output(std::unique_ptr<FeatureComputeContext> &context_) {
-    ac::ExecBatch exec_batch;
+    cp::ExecBatch exec_batch;
     std::mutex m;
     std::condition_variable cv;
     bool ready = false;
     context_->channel_.async_receive(
-        [&](boost::system::error_code ec, ac::ExecBatch b) {
+        [&](boost::system::error_code ec, cp::ExecBatch b) {
             fmt::print("exec batch received\n");
             exec_batch = std::move(b);
             {
