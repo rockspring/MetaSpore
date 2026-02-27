@@ -50,11 +50,9 @@ TEST(FeatureComputeFuncsTestSuite, TestStringBkdrHashFunc) {
 
 TEST(FeatureComputeFuncsTestSuite, TestStringListBkdrHashFunc) {
     auto string_builder = std::make_shared<arrow::StringBuilder>();
-    arrow::ListBuilder string_list_builder(arrow::default_memory_pool(), string_builder,
-                                           std::make_shared<arrow::ListType>(arrow::utf8()));
+    arrow::ListBuilder string_list_builder(arrow::default_memory_pool(), string_builder);
     auto uint64_builder = std::make_shared<arrow::UInt64Builder>();
-    arrow::ListBuilder uint64_list_builder(arrow::default_memory_pool(), uint64_builder,
-                                           std::make_shared<arrow::ListType>(arrow::uint64()));
+    arrow::ListBuilder uint64_list_builder(arrow::default_memory_pool(), uint64_builder);
     std::string column_name = "column_name";
     uint64_t seed = BKDRHashWithEqualPostfix(column_name.c_str(), column_name.length(), 0UL);
     for (int i = 0; i < 10; ++i) {
@@ -85,8 +83,7 @@ TEST(FeatureComputeFuncsTestSuite, TestMultiStringListBkdrHashAndCombineFunc) {
     struct Builders {
         std::shared_ptr<arrow::StringBuilder> string_builder =
             std::make_shared<arrow::StringBuilder>();
-        arrow::ListBuilder string_list_builder{arrow::default_memory_pool(), string_builder,
-                                               std::make_shared<arrow::ListType>(arrow::utf8())};
+        arrow::ListBuilder string_list_builder{arrow::default_memory_pool(), string_builder};
         std::string column_name;
         uint64_t seed;
 
@@ -95,8 +92,7 @@ TEST(FeatureComputeFuncsTestSuite, TestMultiStringListBkdrHashAndCombineFunc) {
               seed(BKDRHashWithEqualPostfix(column_name.c_str(), column_name.length(), 0UL)) {}
     };
     std::shared_ptr<arrow::UInt64Builder> uint64_builder = std::make_shared<arrow::UInt64Builder>();
-    arrow::ListBuilder uint64_list_builder{arrow::default_memory_pool(), uint64_builder,
-                                           std::make_shared<arrow::ListType>(arrow::uint64())};
+    arrow::ListBuilder uint64_list_builder{arrow::default_memory_pool(), uint64_builder};
     std::vector<Builders> builders;
     for (size_t i = 0; i < 3; ++i) {
         builders.emplace_back(Builders("column_name_" + std::to_string(i)));

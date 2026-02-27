@@ -34,12 +34,12 @@ ArrowRecordBatchSerde::deserialize_from(const std::string &name, const metaspore
     auto reader = arrow::Buffer::GetReader(arrow::Buffer::Wrap(buffer.c_str(), buffer.length()));
     if (!reader.ok()) {
         return absl::InternalError(fmt::format("Create reader from buffer failed for input {}: {}",
-                                               name, reader.status()));
+                                               name, reader.status().ToString()));
     }
     auto rb_reader_result = arrow::ipc::RecordBatchFileReader::Open(reader->get());
     if (!rb_reader_result.ok()) {
-        return absl::InternalError(
-            fmt::format("Create RecordBatchFileReader failed {}", rb_reader_result.status()));
+        return absl::InternalError(fmt::format("Create RecordBatchFileReader failed {}",
+                                               rb_reader_result.status().ToString()));
     }
     auto rb_reader = *rb_reader_result;
     if (rb_reader->num_record_batches() <= 0) {
@@ -47,7 +47,8 @@ ArrowRecordBatchSerde::deserialize_from(const std::string &name, const metaspore
     }
     auto result = rb_reader->ReadRecordBatch(0);
     if (!result.ok()) {
-        return absl::InternalError(fmt::format("Reader record batch failed {}", result.status()));
+        return absl::InternalError(
+            fmt::format("Reader record batch failed {}", result.status().ToString()));
     }
     return *result;
 }

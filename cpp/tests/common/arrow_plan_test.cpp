@@ -16,8 +16,6 @@
 
 #include <arrow/api.h>
 #include <arrow/compute/api.h>
-#include <arrow/compute/exec/exec_plan.h>
-#include <arrow/compute/exec/options.h>
 #include <arrow/util/async_generator.h>
 
 #include <absl/status/status.h>
@@ -28,26 +26,28 @@
 #include <spdlog/spdlog.h>
 
 #include <common/arrow/arrow_helpers.h>
+#include <common/arrow/arrow_exec_plan_compat.h>
 #include <common/threadpool.h>
 #include <common/utils.h>
 
 using namespace metaspore;
 using namespace std::string_literals;
+namespace ac = metaspore::arrow_exec;
 
 using channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code,
-                                                                        arrow::compute::ExecBatch)>;
+                                                                        ac::ExecBatch)>;
 
 class FeatureComputeContext {
   public:
     struct InputSource {
-        arrow::PushGenerator<arrow::util::optional<arrow::compute::ExecBatch>> input_queue;
-        arrow::compute::ExecNode *node;
+        arrow::PushGenerator<arrow::util::optional<ac::ExecBatch>> input_queue;
+        ac::ExecNode *node;
     };
 
-    std::shared_ptr<arrow::compute::ExecPlan> plan_;
+    std::shared_ptr<ac::ExecPlan> plan_;
     std::unordered_map<std::string, InputSource> name_source_map_;
-    arrow::compute::ExecNode *root_node_{nullptr};
-    arrow::compute::ExecNode *join_node_{nullptr};
+    ac::ExecNode *root_node_{nullptr};
+    ac::ExecNode *join_node_{nullptr};
     channel_type channel_{Threadpools::get_compute_threadpool(), 10};
     arrow::Future<> sink_future_{arrow::Future<>::Make()};
 };
@@ -58,9 +58,9 @@ absl::Status add_source(std::unique_ptr<FeatureComputeContext> &context_, const 
     if (!pair.second) {
         return absl::AlreadyExistsError(fmt::format("Input source {} already exists", name));
     }
-    auto node_result = arrow::compute::MakeExecNode(
+    auto node_result = ac::MakeExecNode(
         "source", context_->plan_.get(), /* inputs = */ {},
-        arrow::compute::SourceNodeOptions{schema, pair.first->second.input_queue});
+        ac::SourceNodeOptions{schema, pair.first->second.input_queue});
     if (!node_result.ok()) {
         return absl::InternalError(node_result.status().message());
     }
@@ -76,15 +76,15 @@ absl::Status feed_input(std::unique_ptr<FeatureComputeContext> &context_,
         return absl::NotFoundError(
             fmt::format("FeatureComputeExec feed_input with non-exist name {}", source_name));
     }
-    arrow::compute::ExecBatch exec_batch(*batch);
+    ac::ExecBatch exec_batch(*batch);
     source->second.input_queue.producer().Push(
-        arrow::util::make_optional<arrow::compute::ExecBatch>(std::move(exec_batch)));
+        arrow::util::make_optional<ac::ExecBatch>(std::move(exec_batch)));
     return absl::OkStatus();
 }
 
 absl::Status add_join_plan(std::unique_ptr<FeatureComputeContext> &context_,
                            const std::string &left_source_name,
-                           const std::string &right_source_name, arrow::compute::JoinType join_type,
+                           const std::string &right_source_name, ac::JoinType join_type,
                            const std::vector<std::string> &left_key_names,
                            const std::vector<std::string> &right_key_names) {
     auto left_source = context_->name_source_map_.find(left_source_name);
@@ -100,7 +100,7 @@ absl::Status add_join_plan(std::unique_ptr<FeatureComputeContext> &context_,
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wfree-nonheap-object"
-    arrow::compute::HashJoinNodeOptions join_opts{
+    ac::HashJoinNodeOptions join_opts{
         join_type, left_key_names | ranges::views::transform([](const std::string &name) {
                        return arrow::FieldRef(name);
                    }) | ranges::to<std::vector>(),
@@ -109,7 +109,7 @@ absl::Status add_join_plan(std::unique_ptr<FeatureComputeContext> &context_,
         }) | ranges::to<std::vector>()};
 #pragma GCC diagnostic pop
 
-    auto hashjoin = arrow::compute::MakeExecNode(
+    auto hashjoin = ac::MakeExecNode(
         "hashjoin", context_->plan_.get(), {left_source->second.node, right_source->second.node},
         join_opts);
     if (!hashjoin.ok()) {
@@ -120,12 +120,12 @@ absl::Status add_join_plan(std::unique_ptr<FeatureComputeContext> &context_,
     return absl::OkStatus();
 }
 
-struct SinkConsumer : public arrow::compute::SinkNodeConsumer {
+struct SinkConsumer : public ac::SinkNodeConsumer {
 
     SinkConsumer(std::shared_ptr<arrow::Schema> schema, channel_type &ch, arrow::Future<> fut)
         : output_schema_(schema), channel_(ch), fut_(std::move(fut)) {}
 
-    arrow::Status Consume(arrow::compute::ExecBatch batch) override {
+    arrow::Status Consume(ac::ExecBatch batch) override {
         fmt::print("consuming batch\n");
         bool s = channel_.try_send(boost::system::error_code(), std::move(batch));
         if (!s) {
@@ -149,9 +149,9 @@ struct SinkConsumer : public arrow::compute::SinkNodeConsumer {
 
 absl::Status finish_plan(std::unique_ptr<FeatureComputeContext> &context_) {
     // create sink reader
-    auto sink_result = arrow::compute::MakeExecNode(
+    auto sink_result = ac::MakeExecNode(
         "consuming_sink", context_->plan_.get(), {context_->root_node_},
-        arrow::compute::ConsumingSinkNodeOptions{std::make_shared<SinkConsumer>(
+        ac::ConsumingSinkNodeOptions{std::make_shared<SinkConsumer>(
             context_->root_node_->output_schema(), context_->channel_, context_->sink_future_)});
     if (!sink_result.ok()) {
         return absl::InternalError(sink_result.status().message());
@@ -173,12 +173,12 @@ absl::Status finish_plan(std::unique_ptr<FeatureComputeContext> &context_) {
 
 absl::StatusOr<std::shared_ptr<arrow::RecordBatch>>
 get_output(std::unique_ptr<FeatureComputeContext> &context_) {
-    arrow::compute::ExecBatch exec_batch;
+    ac::ExecBatch exec_batch;
     std::mutex m;
     std::condition_variable cv;
     bool ready = false;
     context_->channel_.async_receive(
-        [&](boost::system::error_code ec, arrow::compute::ExecBatch b) {
+        [&](boost::system::error_code ec, ac::ExecBatch b) {
             fmt::print("exec batch received\n");
             exec_batch = std::move(b);
             {
@@ -238,9 +238,9 @@ make_item_record_batch() {
 
 int main(int argc, char **argv) {
 
-    auto result = arrow::compute::ExecPlan::Make();
+    auto result = ac::ExecPlan::Make();
     if (!result.ok()) {
-        fmt::print(stderr, "{}\n", result.status());
+        fmt::print(stderr, "{}\n", result.status().ToString());
         return 1;
     }
     std::unique_ptr<FeatureComputeContext> context_ = std::make_unique<FeatureComputeContext>();
@@ -260,7 +260,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    status = add_join_plan(context_, item_table, user_table, arrow::compute::JoinType::LEFT_OUTER,
+    status = add_join_plan(context_, item_table, user_table, ac::JoinType::LEFT_OUTER,
                            std::vector({"user_id"s}), std::vector({"user_id"s}));
     if (!status.ok()) {
         fmt::print(stderr, "add join plan failed {}", status);

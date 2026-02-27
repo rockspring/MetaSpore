@@ -17,13 +17,18 @@
 #pragma once
 
 #include <arrow/compute/api.h>
+#include <arrow/util/config.h>
 
 namespace metaspore {
 
 template <typename FunctionOption>
 class MetaSporeBKDRHashFuncOptType : public arrow::compute::FunctionOptionsType {
   public:
+#if ARROW_VERSION_MAJOR >= 23
+    std::string type_name() const override { return FunctionOption::type_name(); }
+#else
     const char *type_name() const override { return FunctionOption::type_name().c_str(); }
+#endif
     std::string Stringify(const arrow::compute::FunctionOptions &option) const override {
         return static_cast<const FunctionOption &>(option).to_string();
     }

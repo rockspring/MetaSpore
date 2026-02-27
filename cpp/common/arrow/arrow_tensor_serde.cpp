@@ -31,8 +31,9 @@ ArrowTensorSerde::deserialize_from(const std::string &name, metaspore::serving::
         return absl::NotFoundError(fmt::format("Cannot find input {} from request", name));
     }
     const std::string &buffer = find->second;
-    arrow::io::BufferReader reader((const uint8_t *) buffer.data(), (int64_t) buffer.size());
-    ASSIGN_RESULT_OR_RETURN_NOT_OK(auto tensor, arrow::ipc::ReadTensor(&reader));
+    ASSIGN_RESULT_OR_RETURN_NOT_OK(auto reader,
+                                   arrow::Buffer::GetReader(arrow::Buffer::Wrap(buffer)));
+    ASSIGN_RESULT_OR_RETURN_NOT_OK(auto tensor, arrow::ipc::ReadTensor(reader.get()));
     return tensor;
 }
 
@@ -43,8 +44,9 @@ ArrowTensorSerde::deserialize_from(const std::string &name, metaspore::serving::
         return absl::NotFoundError(fmt::format("Cannot find input {} from reply", name));
     }
     const std::string &buffer = find->second;
-    arrow::io::BufferReader reader((const uint8_t *) buffer.data(), (int64_t) buffer.size());
-    ASSIGN_RESULT_OR_RETURN_NOT_OK(auto tensor, arrow::ipc::ReadTensor(&reader));
+    ASSIGN_RESULT_OR_RETURN_NOT_OK(auto reader,
+                                   arrow::Buffer::GetReader(arrow::Buffer::Wrap(buffer)));
+    ASSIGN_RESULT_OR_RETURN_NOT_OK(auto tensor, arrow::ipc::ReadTensor(reader.get()));
     return tensor;
 }
 

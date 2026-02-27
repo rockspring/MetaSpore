@@ -15,7 +15,6 @@
 //
 
 #include <arrow/compute/api.h>
-#include <arrow/compute/exec/exec_plan.h>
 #include <boost/algorithm/string.hpp>
 #include <boost/spirit/home/x3.hpp>
 #include <range/v3/range/conversion.hpp>
@@ -144,7 +143,8 @@ status FeatureSchemaParser::parse_table_join(std::istream &is, FeatureComputeExe
             spdlog::info("Parsed join: {}#{}({})=>{}\n", left_table, right_table, join_key,
                          output_name);
             CALL_AND_RETURN_IF_STATUS_NOT_OK(exec.add_join_plan(
-                left_table, right_table, cp::JoinType::LEFT_OUTER, {join_key}, {join_key}));
+                left_table, right_table, arrow_exec::JoinType::LEFT_OUTER, {join_key},
+                {join_key}));
         } else {
             auto m = fmt::format("Parsing join rule failed {}", line);
             spdlog::error(m);

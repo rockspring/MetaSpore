@@ -20,6 +20,7 @@
 #include <common/utils.h>
 
 #include <fmt/format.h>
+#include <vector>
 
 namespace cp = arrow::compute;
 
@@ -59,8 +60,7 @@ arrow::Status StringBKDRHashKernelListString(cp::KernelContext *ctx, const cp::E
     const StringBKDRHashState *state = (const StringBKDRHashState *)ctx->state();
     auto input_array = batch[0].array_as<arrow::ListArray>();
     auto value_builder = std::make_shared<arrow::UInt64Builder>();
-    arrow::ListBuilder builder(ctx->memory_pool(), value_builder,
-                               std::make_shared<arrow::ListType>(arrow::uint64()));
+    arrow::ListBuilder builder(ctx->memory_pool(), value_builder);
     std::shared_ptr<arrow::StringArray> values =
         std::dynamic_pointer_cast<arrow::StringArray>(input_array->values());
     if (!values) {
@@ -128,19 +128,19 @@ arrow::Status AddStringBKDRHashFunction() {
         state->seed = BKDRHashWithEqualPostfix(name.c_str(), name.length(), 0);
         return state;
     };
-    cp::ScalarKernel string_kernel({cp::InputType::Array(arrow::utf8())}, arrow::uint64(),
+    cp::ScalarKernel string_kernel(std::vector<cp::InputType>{cp::InputType(arrow::utf8())},
+                                   cp::OutputType(arrow::uint64()),
                                    /* exec = */ StringBKDRHashKernelString,
                                    /* init = */ initfn);
     string_kernel.can_write_into_slices = false;
     cp::ScalarKernel string_list_kernel(
-        {cp::InputType::Array(std::make_shared<arrow::ListType>(arrow::utf8()))},
-        std::static_pointer_cast<arrow::DataType>(
-            std::make_shared<arrow::ListType>(arrow::uint64())),
+        std::vector<cp::InputType>{cp::InputType(arrow::list(arrow::utf8()))},
+        cp::OutputType(arrow::list(arrow::uint64())),
         /* exec = */ StringBKDRHashKernelListString,
         /* init = */ initfn);
     string_list_kernel.can_write_into_slices = false;
-    auto func =
-        std::make_shared<cp::ScalarFunction>("bkdr_hash", cp::Arity::Unary(), &bkdr_func_doc);
+    auto func = std::make_shared<cp::ScalarFunction>("bkdr_hash", cp::Arity::Unary(),
+                                                     bkdr_func_doc);
     ARROW_RETURN_NOT_OK(func->AddKernel(std::move(string_kernel)));
     ARROW_RETURN_NOT_OK(func->AddKernel(std::move(string_list_kernel)));
     ARROW_RETURN_NOT_OK(registry->AddFunction(func));
@@ -170,8 +170,7 @@ arrow::Status BKDRHashCombineKernelListUInt64(cp::KernelContext *ctx, const cp::
                           HashListAccessor::create_accessor_makers<Container>(arrays));
 
     auto value_builder = std::make_shared<arrow::UInt64Builder>();
-    arrow::ListBuilder builder(ctx->memory_pool(), value_builder,
-                               std::make_shared<arrow::ListType>(arrow::uint64()));
+    arrow::ListBuilder builder(ctx->memory_pool(), value_builder);
     ARROW_RETURN_NOT_OK(builder.Reserve(batch.length));
     for (int64_t i = 0; i < batch.length; ++i) {
         Container<HashListAccessor> lists;
@@ -200,14 +199,13 @@ arrow::Status BKDRHashCombineKernelListUInt64(cp::KernelContext *ctx, const cp::
 arrow::Status AddBKDRHashCombineFunction() {
     cp::FunctionRegistry *registry = cp::GetFunctionRegistry();
     cp::ScalarKernel kernel(
-        cp::KernelSignature::Make({cp::InputType(/* ANY_TYPE */ arrow::ValueDescr::ARRAY)},
-                                  std::static_pointer_cast<arrow::DataType>(
-                                      std::make_shared<arrow::ListType>(arrow::uint64())),
+        cp::KernelSignature::Make({cp::InputType::Any()},
+                                  cp::OutputType(arrow::list(arrow::uint64())),
                                   /* is_varargs = */ true),
         /* exec = */ BKDRHashCombineKernelListUInt64);
     kernel.can_write_into_slices = false;
     auto func = std::make_shared<cp::ScalarFunction>("bkdr_hash_combine", cp::Arity::VarArgs(1),
-                                                     &bkdr_hash_combine_func_doc);
+                                                     bkdr_hash_combine_func_doc);
     ARROW_RETURN_NOT_OK(func->AddKernel(std::move(kernel)));
     ARROW_RETURN_NOT_OK(registry->AddFunction(func));
     return arrow::Status::OK();

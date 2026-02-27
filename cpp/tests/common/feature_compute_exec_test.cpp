@@ -73,7 +73,7 @@ TEST(FeatureComputeExecTestSuite, FeatureComputeJoinTest) {
         status = exec.add_source(item_table);
         ASSERT_STATUS_OK_COROUTINE(status);
 
-        status = exec.add_join_plan(item_table, user_table, arrow::compute::JoinType::LEFT_OUTER,
+        status = exec.add_join_plan(item_table, user_table, arrow_exec::JoinType::LEFT_OUTER,
                                     std::vector({"user_id"s}), std::vector({"user_id"s}));
         ASSERT_STATUS_OK_COROUTINE(status);
 
