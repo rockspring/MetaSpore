@@ -166,7 +166,7 @@ Converter::ort_to_arrow_tensor(const Ort::Value &ort_tensor) {
     }();
     if (!arrow_tensor_result.ok()) {
         return absl::InternalError(
-            fmt::format("Unsupported ort type {}", arrow_tensor_result.status()));
+            fmt::format("Unsupported ort type {}", arrow_tensor_result.status().ToString()));
     }
     return *arrow_tensor_result;
 }

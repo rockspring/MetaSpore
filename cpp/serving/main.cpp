@@ -35,7 +35,7 @@ int main(int argc, char **argv) {
     gflags::ParseCommandLineFlags(&argc, &argv, true);
     auto status = metaspore::RegisterCustomArrowFunctions();
     if (!status.ok()) {
-        fmt::print(stderr, "register arrow functions failed {}\n", status);
+        fmt::print(stderr, "register arrow functions failed {}\n", status.ToString());
         return 1;
     }
 

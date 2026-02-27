@@ -29,6 +29,7 @@
 #endif
 
 #include <spdlog/spdlog.h>
+#include <fmt/ranges.h>
 
 #include <chrono>
 

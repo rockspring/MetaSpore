@@ -58,7 +58,8 @@ awaitable_status SparseLookupModel::load(std::string dir_path) {
             auto embedding_table_dir = p / "embedding_table";
             if (!std::filesystem::is_directory(embedding_table_dir)) {
                 co_return absl::NotFoundError(fmt::format(
-                    "SparseLookupModel cannot find embedding table dir {}", embedding_table_dir));
+                    "SparseLookupModel cannot find embedding table dir {}",
+                    embedding_table_dir.string()));
             }
             context_->source_ = InMemorySparseLookupSource::make();
             CO_AWAIT_AND_CO_RETURN_IF_STATUS_NOT_OK(

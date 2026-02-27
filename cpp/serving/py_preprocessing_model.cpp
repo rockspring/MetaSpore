@@ -20,15 +20,16 @@
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
-#include <agrpc/asioGrpc.hpp>
 #include <grpcpp/client_context.h>
 #include <grpcpp/create_channel.h>
 #include <fmt/format.h>
+#include <fmt/ranges.h>
 #include <common/logger.h>
 #include <common/threadpool.h>
 #include <common/utils.h>
 #include <common/metaspore.pb.h>
 #include <common/metaspore.grpc.pb.h>
+#include <serving/agrpc_compat.h>
 #include <serving/grpc_client_context_pool.h>
 #include <serving/py_preprocessing_process.h>
 #include <serving/py_preprocessing_model.h>
@@ -74,7 +75,8 @@ awaitable_status PyPreprocessingModel::load(std::string dir_path) {
             auto temp_dir = std::filesystem::temp_directory_path() / uuid;
             if (!std::filesystem::create_directory(temp_dir)) {
                 co_return absl::FailedPreconditionError(
-                    fmt::format("PyPreprocessingModel cannot create temp dir {}", temp_dir));
+                    fmt::format("PyPreprocessingModel cannot create temp dir {}",
+                                temp_dir.string()));
             }
             context_->temp_dir_ = temp_dir;
             auto venv_dir = temp_dir / "venv";
@@ -99,7 +101,8 @@ awaitable_status PyPreprocessingModel::load(std::string dir_path) {
             auto preprocessor_script = p / "preprocessor.py";
             if (!std::filesystem::exists(preprocessor_script)) {
                 co_return absl::NotFoundError(fmt::format(
-                    "PyPreprocessingModel cannot find preprocessor script {}", preprocessor_script));
+                    "PyPreprocessingModel cannot find preprocessor script {}",
+                    preprocessor_script.string()));
             }
             context_->process_.set_preprocessor_config_dir(dir_path);
 

@@ -21,7 +21,7 @@
 #include <vector>
 #include <forward_list>
 #include <thread>
-#include <agrpc/asioGrpc.hpp>
+#include <serving/agrpc_compat.h>
 
 namespace metaspore::serving {
 
