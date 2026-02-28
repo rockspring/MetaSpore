@@ -47,7 +47,6 @@
         "zlib",
         "abseil",
         "cpp-httplib",
-        "apollo-client",
         "aerospike-client",
         {
             "name": "cpp-common",
