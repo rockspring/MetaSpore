@@ -7,6 +7,26 @@
             "packages": [
                 "onnxruntime-gpu-default"
             ]
+        },
+        {
+            "kind": "git",
+            "repository": "https://github.com/sunzhenkai/vcpkg-base.git",
+            "baseline": "4c7599e52925ebdb1f061b0c7109493d5fa5d2d3",
+            "reference": "main",
+            "packages": [
+                "apollo-client",
+                "aerospike-client",
+                "cpp-common"
+            ]
+        },
+        {
+            "kind": "git",
+            "repository": "https://gitlab.yeahmobi.com/dsp-algo/z-vcpkg-registry.git",
+            "baseline": "8cd104e20509d6449f7bdfa11b6b798ff499fbd0",
+            "reference": "main",
+            "packages": [
+                "z-protocols"
+            ]
         }
     ]
 }
