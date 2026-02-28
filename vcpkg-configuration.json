@@ -34,8 +34,7 @@
             "baseline": "849c4f512c0be3d7bbd48cbe45813ea17c1217b3",
             "reference": "main",
             "packages": [
-                "aliyun-oss-cpp-sdk",
-                "vcpkg_make"
+                "aliyun-oss-cpp-sdk"
             ]
         }
     ]
