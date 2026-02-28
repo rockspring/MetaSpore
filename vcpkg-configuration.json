@@ -31,10 +31,11 @@
         {
             "kind": "git",
             "repository": "https://github.com/rockspring/vcpkg-registry.git",
-            "baseline": "33c7738c72be840b565257d40edb93be7bf1ab3d",
+            "baseline": "385c3aba62b47599742be9211c928e11145f9f37",
             "reference": "main",
             "packages": [
-                "aliyun-oss-cpp-sdk"
+                "aliyun-oss-cpp-sdk",
+                "vcpkg-make"
             ]
         }
     ]
