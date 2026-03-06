@@ -26,6 +26,7 @@
 #include <common/threadpool.h>
 
 #include <filesystem>
+#include <fstream>
 
 #include <boost/algorithm/string.hpp>
 #include <fmt/format.h>
@@ -49,6 +50,7 @@ class TabularModelContext {
     OrtModel ort_model;
     // inputs of crt model is unique set of inputs of all Fe models
     std::vector<std::string> inputs_;
+    std::string version_;
 };
 
 TabularModel::TabularModel() { context_ = std::make_unique<TabularModelContext>(); }
@@ -67,6 +69,28 @@ awaitable_status TabularModel::load(std::string dir_path) {
             if (!fs::is_directory(root_dir)) {
                 co_return absl::NotFoundError(
                     fmt::format("TabularModel cannot find dir {}", dir_path));
+            }
+            auto version_file = root_dir / "version.txt";
+            if (!fs::is_regular_file(version_file)) {
+                co_return absl::NotFoundError(
+                    fmt::format("TabularModel requires version.txt under {}", dir_path));
+            }
+            {
+                std::ifstream ifs(version_file);
+                if (!ifs.good()) {
+                    co_return absl::FailedPreconditionError(
+                        fmt::format("TabularModel cannot open {}", version_file.string()));
+                }
+                if (!std::getline(ifs, context_->version_)) {
+                    co_return absl::FailedPreconditionError(
+                        fmt::format("TabularModel cannot read first line from {}",
+                                    version_file.string()));
+                }
+                boost::trim(context_->version_);
+                if (context_->version_.empty()) {
+                    co_return absl::InvalidArgumentError(
+                        fmt::format("TabularModel got empty version in {}", version_file.string()));
+                }
             }
             bool dense_loaded = false;
 
@@ -168,9 +192,9 @@ awaitable_status TabularModel::load(std::string dir_path) {
             context_->inputs_.erase(last, context_->inputs_.end());
 
             spdlog::info("TabularModel loaded from {}, required inputs [{}], "
-                         "producing outputs [{}]",
+                         "producing outputs [{}], version [{}]",
                          dir_path, fmt::join(context_->inputs_, ", "),
-                         fmt::join(this->output_names(), ", "));
+                         fmt::join(this->output_names(), ", "), context_->version_);
             co_return absl::OkStatus();
         },
         boost::asio::use_awaitable);
@@ -249,5 +273,7 @@ const std::vector<std::string> &TabularModel::input_names() const { return conte
 const std::vector<std::string> &TabularModel::output_names() const {
     return context_->ort_model.output_names();
 }
+
+const std::string &TabularModel::version() const { return context_->version_; }
 
 } // namespace metaspore::serving

@@ -18,6 +18,7 @@
 #include <serving/grpc_model_runner.h>
 #include <serving/py_preprocessing_model.h>
 #include <serving/ort_model.h>
+#include <serving/tabular_model.h>
 
 namespace metaspore::serving {
 
@@ -37,6 +38,8 @@ awaitable_result<PredictReply> GrpcTabularModelRunner::predict(PredictRequest &r
     auto reply_ptr = std::make_unique<GrpcReplyInput>(reply);
     CALL_AND_CO_RETURN_IF_STATUS_NOT_OK(
         output_conveter->convert_input(std::move(predict_result), reply_ptr.get()));
+    auto *tabular_model = static_cast<TabularModel *>(model.get());
+    (*reply.mutable_extras())["version"] = tabular_model->version();
 
     co_return reply;
 }
