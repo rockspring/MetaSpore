@@ -82,6 +82,13 @@ awaitable<void> respond_error(grpc::ServerAsyncResponseWriter<LoadReply> &writer
         boost::asio::use_awaitable);
 }
 
+awaitable<void> respond_error(grpc::ServerAsyncResponseWriter<UnloadReply> &writer,
+                              const status &s) {
+    co_await agrpc::finish_with_error(
+        writer, grpc::Status(static_cast<grpc::StatusCode>(s.code()), s.ToString()),
+        boost::asio::use_awaitable);
+}
+
 void register_predict_request_handler(agrpc::GrpcContext &grpc_context,
                                       Predict::AsyncService &predict_service,
                                       GrpcServerShutdown &server_shutdown)
@@ -149,6 +156,36 @@ void register_load_request_handler(agrpc::GrpcContext &grpc_context,
             }));
 }
 
+void register_unload_request_handler(agrpc::GrpcContext &grpc_context,
+                                     Load::AsyncService &load_service,
+                                     GrpcServerShutdown &server_shutdown)
+{
+    agrpc::repeatedly_request(
+        &Load::AsyncService::RequestUnload, load_service,
+        boost::asio::bind_executor(
+            grpc_context,
+            [&](grpc::ServerContext &ctx, UnloadRequest &req,
+                grpc::ServerAsyncResponseWriter<UnloadReply> &writer) -> awaitable<void> {
+                const std::string &model_name = req.model_name();
+                const std::string &version = req.version();
+                std::string desc = " model " + metaspore::ToSource(model_name) +
+                                   " version " + metaspore::ToSource(version) + ".";
+                spdlog::info("Unloading" + desc);
+                auto status = co_await ModelManager::get_model_manager().unload(model_name);
+                if (!status.ok()) {
+                    spdlog::error("Fail to unload" + desc);
+                    co_await respond_error(writer, status);
+                } else {
+                    UnloadReply reply;
+                    reply.set_msg("Successfully unloaded" + desc);
+                    spdlog::info(reply.msg());
+                    co_await agrpc::finish(writer, reply, grpc::Status::OK,
+                                           boost::asio::use_awaitable);
+                }
+                co_return;
+            }));
+}
+
 void GrpcServer::run() {
     GrpcServerShutdown server_shutdown{*context_->server, context_->grpc_server_contexts.front()};
     for (int i = 0; i < context_->grpc_server_thread_count; i++) {
@@ -156,6 +193,7 @@ void GrpcServer::run() {
             auto &grpc_context = *std::next(context_->grpc_server_contexts.begin(), i);
             register_predict_request_handler(grpc_context, context_->predict_service, server_shutdown);
             register_load_request_handler(grpc_context, context_->load_service, server_shutdown);
+            register_unload_request_handler(grpc_context, context_->load_service, server_shutdown);
             grpc_context.run();
         });
     }

@@ -85,4 +85,20 @@ public class ServingClient {
         }
         return true;
     }
+
+    public static Boolean unloadModel(LoadGrpc.LoadBlockingStub client,
+                                      String modelName,
+                                      String version) {
+        UnloadRequest.Builder builder = UnloadRequest.newBuilder();
+        builder.setModelName(modelName);
+        builder.setVersion(version);
+        try {
+            UnloadReply reply = client.unload(builder.build());
+            log.warn("notify unload model: {}, version: {}, reply: {}", modelName, version, reply.getMsg());
+        } catch (Exception ex) {
+            log.warn("notify unload model: {}, version: {} fail!", modelName, version);
+            return false;
+        }
+        return true;
+    }
 }

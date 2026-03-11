@@ -144,6 +144,23 @@ awaitable_status ModelManager::load(const std::string &dir_path, const std::stri
     co_return s;
 }
 
+awaitable_status ModelManager::unload(const std::string &name) {
+    auto s = co_await boost::asio::co_spawn(
+        Threadpools::get_background_threadpool(),
+        [this, &name]() -> awaitable_status {
+            std::unique_lock wl(mu_);
+            auto it = models_.find(name);
+            if (it == models_.end()) {
+                co_return absl::NotFoundError(fmt::format("Cannot find model {}", name));
+            }
+            models_.erase(it);
+            spdlog::info("ModelManager: Unloaded model {}", name);
+            co_return absl::OkStatus();
+        },
+        boost::asio::use_awaitable);
+    co_return s;
+}
+
 result<std::shared_ptr<GrpcModelRunner>> ModelManager::get_model(const std::string &name) {
     std::shared_lock rl(mu_);
     if (auto find = models_.find(name); find != models_.end()) {

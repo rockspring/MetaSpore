@@ -37,6 +37,8 @@ class ModelManager {
 
     awaitable_status load(const std::string &dir_path, const std::string &name);
 
+    awaitable_status unload(const std::string &name);
+
     result<std::shared_ptr<GrpcModelRunner>> get_model(const std::string &name);
 
   private:
