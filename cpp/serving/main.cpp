@@ -17,6 +17,7 @@
 #include <common/logger.h>
 #include <common/features/feature_compute_funcs.h>
 #include <serving/grpc_server.h>
+#include <serving/metrics.h>
 #include <serving/grpc_client_context_pool.h>
 #include <serving/model_manager.h>
 #include <common/threadpool.h>
@@ -40,6 +41,7 @@ int main(int argc, char **argv) {
     }
 
     metaspore::SpdlogDefault::Init();
+    Metrics::get_instance();  // initialize metrics HTTP server after flags are parsed
     GrpcClientContextPool::get_instance();
 
     ModelManager::get_model_manager().init(FLAGS_init_load_path);
