@@ -36,6 +36,7 @@ namespace metaspore::serving {
 DECLARE_string(grpc_listen_host);
 DECLARE_string(grpc_listen_port);
 DECLARE_uint64(grpc_server_threads);
+DECLARE_uint64(predict_slow_log_threshold_ms);
 
 class GrpcServerContext {
   public:
