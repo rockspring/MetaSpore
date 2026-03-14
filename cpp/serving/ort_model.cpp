@@ -19,6 +19,7 @@
 #include <serving/ort_model.h>
 #include <common/utils.h>
 
+#include <atomic>
 #include <filesystem>
 
 #include <boost/core/demangle.hpp>
@@ -29,6 +30,9 @@ namespace metaspore::serving {
 
 DECLARE_uint64(ort_intraop_thread_num);
 DECLARE_uint64(ort_interop_thread_num);
+DECLARE_string(ort_profile_prefix);
+DECLARE_uint64(ort_profile_warmup);
+DECLARE_uint64(ort_profile_count);
 
 class OrtModelGlobal {
   public:
@@ -60,6 +64,8 @@ class OrtModelContext {
     std::vector<std::string> output_names_s_;
     std::vector<const char *> input_names_;
     std::vector<const char *> output_names_;
+    std::atomic<uint64_t> predict_count_{0};
+    bool profiling_ended_{false};
 
     ~OrtModelContext() {
         for (auto p : input_names_) {
@@ -92,6 +98,12 @@ awaitable_status OrtModel::load(std::string dir_path) {
             if (!std::filesystem::is_regular_file(file)) {
                 co_return absl::NotFoundError(
                     fmt::format("model.onnx doesn't exist under {}", dir_path));
+            }
+            if (!FLAGS_ort_profile_prefix.empty()) {
+                context_->session_options_.EnableProfiling(FLAGS_ort_profile_prefix.c_str());
+                spdlog::info("OrtModel profiling enabled, prefix={}, warmup={}, count={}",
+                             FLAGS_ort_profile_prefix, FLAGS_ort_profile_warmup,
+                             FLAGS_ort_profile_count);
             }
             if (GpuHelper::is_gpu_available()) {
                 spdlog::info("Use cuda:0");
@@ -155,6 +167,19 @@ OrtModel::do_predict(std::unique_ptr<OrtModelInput> input) {
     for (size_t i = 0; i < output_count; ++i) {
         output->outputs.emplace(std::string(context_->output_names_[i]), std::move(outs[i]));
     }
+
+    if (!FLAGS_ort_profile_prefix.empty() && !context_->profiling_ended_) {
+        const uint64_t count = ++context_->predict_count_;
+        const uint64_t threshold = FLAGS_ort_profile_warmup + FLAGS_ort_profile_count;
+        if (count == threshold) {
+            context_->profiling_ended_ = true;
+            std::string profile_file = context_->session_.EndProfiling();
+            spdlog::info("OrtModel profiling ended after {} warm-up + {} profile calls, "
+                         "output file: {}",
+                         FLAGS_ort_profile_warmup, FLAGS_ort_profile_count, profile_file);
+        }
+    }
+
     co_return output;
 }
 

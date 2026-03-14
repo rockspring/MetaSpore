@@ -27,5 +27,8 @@ DEFINE_string(grpc_listen_port, "50051", "Listen port for grpc service");
 DEFINE_string(init_load_path, ".", "Load path to init during start");
 DEFINE_uint64(predict_slow_log_threshold_ms, 50UL, "Slow request threshold in milliseconds for predict logging");
 DEFINE_uint32(metrics_port, 8080, "HTTP port for Prometheus metrics endpoint (/metrics); set 0 to disable");
+DEFINE_string(ort_profile_prefix, "", "File path prefix for ORT profiling output; empty means profiling disabled");
+DEFINE_uint64(ort_profile_warmup, 10UL, "Number of warm-up predict calls before ORT profiling is recorded");
+DEFINE_uint64(ort_profile_count, 5UL, "Number of predict calls to profile after warm-up");
 
 } // namespace metaspore::serving
