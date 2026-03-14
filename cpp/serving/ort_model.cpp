@@ -173,7 +173,9 @@ OrtModel::do_predict(std::unique_ptr<OrtModelInput> input) {
         const uint64_t threshold = FLAGS_ort_profile_warmup + FLAGS_ort_profile_count;
         if (count == threshold) {
             context_->profiling_ended_ = true;
-            std::string profile_file = context_->session_.EndProfiling();
+            char *profile_file_raw = context_->session_.EndProfiling(context_->allocator_);
+            std::string profile_file(profile_file_raw);
+            context_->allocator_.Free(profile_file_raw);
             spdlog::info("OrtModel profiling ended after {} warm-up + {} profile calls, "
                          "output file: {}",
                          FLAGS_ort_profile_warmup, FLAGS_ort_profile_count, profile_file);
