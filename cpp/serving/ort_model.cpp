@@ -102,11 +102,14 @@ class OrtModelContext {
     // The old session remains alive as long as any in-flight do_predict holds
     // its shared_ptr copy; shared_ptr ref-counting frees it automatically.
     void publish_session(std::shared_ptr<Ort::Session> sess) {
-        session_ptr_.store(std::move(sess), std::memory_order_release);
+        // std::atomic<shared_ptr> specialization requires C++20 / GCC 12+.
+        // Use the C++11 free functions instead; they provide the same atomicity
+        // via internal locking on shared_ptr's control block.
+        std::atomic_store(&session_ptr_, std::move(sess));
     }
 
     std::shared_ptr<Ort::Session> load_session() const {
-        return session_ptr_.load(std::memory_order_acquire);
+        return std::atomic_load(&session_ptr_);
     }
 
     // Build a fresh Ort::Session (optionally with profiling) and publish it.
@@ -212,7 +215,9 @@ class OrtModelContext {
     Ort::SessionOptions session_options_;
     // session_ptr_ is the sole owner of the active Ort::Session.
     // Lifetime is managed by shared_ptr ref-counting; no raw session_ member.
-    std::atomic<std::shared_ptr<Ort::Session>> session_ptr_{};
+    // Use plain shared_ptr + std::atomic_load/store free functions (C++11).
+    // std::atomic<shared_ptr<T>> specialization needs GCC 12+ (C++20 P0718R2).
+    std::shared_ptr<Ort::Session> session_ptr_;
     Ort::AllocatorWithDefaultOptions allocator_;
     std::string dir_path_;
     std::vector<std::string> input_names_s_;
