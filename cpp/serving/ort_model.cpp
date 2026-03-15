@@ -23,7 +23,7 @@
 #include <chrono>
 #include <csignal>
 #include <filesystem>
-#include <memory>
+#include <shared_mutex>
 #include <thread>
 
 #include <boost/core/demangle.hpp>
@@ -85,7 +85,7 @@ static OrtModelGlobal &get_ort_model_global() {
 // ---------------------------------------------------------------------------
 class OrtModelContext {
   public:
-    OrtModelContext() : run_options_(), session_options_() {
+    OrtModelContext() : run_options_(), session_options_(), session_(nullptr) {
         configure_session_options(session_options_);
     }
 
@@ -97,24 +97,10 @@ class OrtModelContext {
         opts.DisableMemPattern();
     }
 
-    // Atomically publish a new session.
-    // do_predict loads this with a single atomic::load (~1-5 ns), no locking.
-    // The old session remains alive as long as any in-flight do_predict holds
-    // its shared_ptr copy; shared_ptr ref-counting frees it automatically.
-    void publish_session(std::shared_ptr<Ort::Session> sess) {
-        // std::atomic<shared_ptr> specialization requires C++20 / GCC 12+.
-        // Use the C++11 free functions instead; they provide the same atomicity
-        // via internal locking on shared_ptr's control block.
-        std::atomic_store(&session_ptr_, std::move(sess));
-    }
-
-    std::shared_ptr<Ort::Session> load_session() const {
-        return std::atomic_load(&session_ptr_);
-    }
-
-    // Build a fresh Ort::Session (optionally with profiling) and publish it.
-    // Called only from the monitor thread; never holds any lock on the hot path.
-    void rebuild_session(const std::string &profile_prefix = "") {
+    // Build a fresh Ort::Session (optionally with profiling).
+    // Must be called while holding an exclusive lock on session_mutex_ so that
+    // no Run() is in progress during the swap.
+    void rebuild_session_locked(const std::string &profile_prefix = "") {
         Ort::SessionOptions new_opts;
         configure_session_options(new_opts);
         if (!profile_prefix.empty()) {
@@ -127,12 +113,12 @@ class OrtModelContext {
 #pragma GCC diagnostic pop
         }
         auto file = std::filesystem::path(dir_path_) / "model.onnx";
-        auto new_sess =
-            std::make_shared<Ort::Session>(get_ort_model_global().env_, file.c_str(), new_opts);
-        publish_session(std::move(new_sess));
+        session_options_ = std::move(new_opts);
+        session_ = Ort::Session(get_ort_model_global().env_, file.c_str(), session_options_);
     }
 
     // CAS 0→1: only one thread enters StartProfiling.
+    // Acquires exclusive lock so no Run() overlaps with the session swap.
     void try_start_profiling() {
         int expected = 0;
         if (!profiling_state_.compare_exchange_strong(expected, 1,
@@ -148,7 +134,10 @@ class OrtModelContext {
                           .count();
             auto prefix = "/tmp" + dir_path_ + "/ort_profile_" + std::to_string(ms);
             std::filesystem::create_directories(std::filesystem::path(prefix).parent_path());
-            rebuild_session(prefix);
+            {
+                std::unique_lock lock(session_mutex_);
+                rebuild_session_locked(prefix);
+            }
             spdlog::info("OrtModel ({}): profiling started, prefix: {}", dir_path_, prefix);
         } catch (const std::exception &e) {
             profiling_state_.store(0, std::memory_order_release); // allow retry
@@ -157,6 +146,11 @@ class OrtModelContext {
     }
 
     // CAS 1→0: only one thread enters EndProfiling.
+    // Acquires exclusive lock to guarantee no Run() is in progress when
+    // EndProfiling() is called — ORT's Profiler::Start() throws if called
+    // after EndProfiling() sets enabled_=false (observed with Loop nodes).
+    // Immediately rebuilds a non-profiling session so subsequent inferences
+    // never touch the disabled profiler.
     void try_stop_profiling() {
         int expected = 1;
         if (!profiling_state_.compare_exchange_strong(expected, 0,
@@ -166,10 +160,18 @@ class OrtModelContext {
             return;
         }
         try {
-            auto sess = load_session();
-            char *profile_path = sess->EndProfiling(allocator_);
+            std::string profile_path;
+            {
+                std::unique_lock lock(session_mutex_);
+                // EndProfiling() flushes the trace file; after this call
+                // enabled_=false inside ORT. Any Run() on this session would fail.
+                char *path = session_.EndProfiling(allocator_);
+                profile_path = path;
+                ::free(path);
+                // Rebuild immediately so the session is usable again.
+                rebuild_session_locked();
+            }
             spdlog::info("OrtModel ({}): profiling stopped, file: {}", dir_path_, profile_path);
-            ::free(profile_path);
         } catch (const std::exception &e) {
             spdlog::error("OrtModel ({}): failed to stop profiling: {}", dir_path_, e.what());
         }
@@ -211,13 +213,16 @@ class OrtModelContext {
         }
     }
 
+    // session_mutex_ guards session_ and session_options_.
+    //
+    // do_predict holds a shared (read) lock — many concurrent Run() calls allowed.
+    // try_start/stop_profiling hold an exclusive (write) lock — ensures no Run()
+    // is in progress during session swap or EndProfiling().
+    mutable std::shared_mutex session_mutex_;
+
     Ort::RunOptions run_options_;
     Ort::SessionOptions session_options_;
-    // session_ptr_ is the sole owner of the active Ort::Session.
-    // Lifetime is managed by shared_ptr ref-counting; no raw session_ member.
-    // Use plain shared_ptr + std::atomic_load/store free functions (C++11).
-    // std::atomic<shared_ptr<T>> specialization needs GCC 12+ (C++20 P0718R2).
-    std::shared_ptr<Ort::Session> session_ptr_;
+    Ort::Session session_;
     Ort::AllocatorWithDefaultOptions allocator_;
     std::string dir_path_;
     std::vector<std::string> input_names_s_;
@@ -263,36 +268,28 @@ awaitable_status OrtModel::load(std::string dir_path) {
                 OrtSessionOptionsAppendExecutionProvider_CUDA(context_->session_options_, 0);
 #pragma GCC diagnostic pop
             }
+            context_->session_ =
+                Ort::Session(get_ort_model_global().env_, file.c_str(), context_->session_options_);
 
-            // Build the initial session and immediately move it into a shared_ptr.
-            // No raw session_ member; session_ptr_ is the single source of truth
-            // from this point on, for both the initial session and any profiling
-            // rebuilds.
-            Ort::Session init_session(get_ort_model_global().env_, file.c_str(),
-                                      context_->session_options_);
-
-            const size_t input_count = init_session.GetInputCount();
+            const size_t input_count = context_->session_.GetInputCount();
             context_->input_names_.reserve(input_count);
             context_->input_names_s_.reserve(input_count);
             for (size_t i = 0UL; i < input_count; ++i) {
                 context_->input_names_.push_back(
-                    init_session.GetInputName(i, context_->allocator_));
+                    context_->session_.GetInputName(i, context_->allocator_));
                 context_->input_names_s_.push_back(context_->input_names_.back());
             }
 
-            const size_t output_count = init_session.GetOutputCount();
+            const size_t output_count = context_->session_.GetOutputCount();
             context_->output_names_.reserve(output_count);
             context_->output_names_s_.reserve(output_count);
             for (size_t i = 0UL; i < output_count; ++i) {
                 context_->output_names_.push_back(
-                    init_session.GetOutputName(i, context_->allocator_));
+                    context_->session_.GetOutputName(i, context_->allocator_));
                 context_->output_names_s_.push_back(context_->output_names_.back());
             }
 
             context_->dir_path_ = dir_path;
-            context_->publish_session(
-                std::make_shared<Ort::Session>(std::move(init_session)));
-
             spdlog::info("OrtModel loaded from {}, required inputs [{}], "
                          "producing outputs [{}]",
                          dir_path, fmt::join(context_->input_names_s_, ", "),
@@ -307,13 +304,12 @@ awaitable_status OrtModel::load(std::string dir_path) {
 
 awaitable_result<std::unique_ptr<OrtModelOutput>>
 OrtModel::do_predict(std::unique_ptr<OrtModelInput> input) {
-    // One atomic load (~1-5 ns). No mutex, no blocking.
-    // If rebuild_session is publishing a new session concurrently, we get either
-    // the old or new session — both are valid Ort::Session objects.
-    // The old session stays alive via this shared_ptr copy until Run() returns.
-    auto sess = context_->load_session();
+    // Shared lock: allows concurrent Run() calls.
+    // Blocks only when try_stop_profiling holds the exclusive lock to call
+    // EndProfiling() — prevents Run() from encountering enabled_=false.
+    std::shared_lock lock(context_->session_mutex_);
 
-    const size_t input_count = sess->GetInputCount();
+    const size_t input_count = context_->session_.GetInputCount();
     std::vector<Ort::Value> inputs;
     inputs.reserve(input_count);
     for (const auto input_name : context_->input_names_) {
@@ -324,10 +320,11 @@ OrtModel::do_predict(std::unique_ptr<OrtModelInput> input) {
                 fmt::format("OrtModel cannot find input named {}", input_name));
         }
     }
-    const size_t output_count = sess->GetOutputCount();
+    const size_t output_count = context_->session_.GetOutputCount();
 
-    auto outs = sess->Run(context_->run_options_, &context_->input_names_[0], &inputs[0],
-                          input_count, &context_->output_names_[0], output_count);
+    auto outs =
+        context_->session_.Run(context_->run_options_, &context_->input_names_[0], &inputs[0],
+                               input_count, &context_->output_names_[0], output_count);
 
     auto output = std::make_unique<OrtModelOutput>();
     for (size_t i = 0; i < output_count; ++i) {
