@@ -25,5 +25,7 @@ DEFINE_uint64(grpc_client_threads, 4UL, "Thread number for grpc clients");
 DEFINE_string(grpc_listen_host, "0.0.0.0", "Listen host for grpc service");
 DEFINE_string(grpc_listen_port, "50051", "Listen port for grpc service");
 DEFINE_string(init_load_path, ".", "Load path to init during start");
+DEFINE_uint64(predict_slow_log_threshold_ms, 5000UL, "Slow request threshold in milliseconds for predict logging");
+DEFINE_uint32(metrics_port, 8080, "HTTP port for Prometheus metrics endpoint (/metrics); set 0 to disable");
 
 } // namespace metaspore::serving

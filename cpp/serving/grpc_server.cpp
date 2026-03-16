@@ -19,6 +19,7 @@
 #include <serving/converters.h>
 #include <serving/grpc_server.h>
 #include <serving/grpc_server_shutdown.h>
+#include <serving/metrics.h>
 #include <serving/model_manager.h>
 #include <metaspore/string_utils.h>
 
@@ -35,6 +36,7 @@ namespace metaspore::serving {
 DECLARE_string(grpc_listen_host);
 DECLARE_string(grpc_listen_port);
 DECLARE_uint64(grpc_server_threads);
+DECLARE_uint64(predict_slow_log_threshold_ms);
 
 class GrpcServerContext {
   public:
@@ -105,6 +107,8 @@ void register_predict_request_handler(agrpc::GrpcContext &grpc_context,
                 } else {
                     // convert grpc to fe input
                     std::string ex;
+                    bool predict_ok = false;
+                    const auto t_start = std::chrono::steady_clock::now();
                     try {
                         auto reply_result = co_await(*find_model)->predict(req);
                         if (!reply_result.ok()) {
@@ -112,10 +116,21 @@ void register_predict_request_handler(agrpc::GrpcContext &grpc_context,
                         } else {
                             co_await agrpc::finish(writer, *reply_result, grpc::Status::OK,
                                                    boost::asio::use_awaitable);
+                            predict_ok = true;
                         }
                     } catch (const std::exception &e) {
                         // unknown exception
                         ex = e.what();
+                    }
+                    const double elapsed_ms =
+                        std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - t_start).count();
+                    auto &metrics = Metrics::get_instance();
+                    metrics.record_request(req.model_name(), predict_ok);
+                    metrics.record_duration(req.model_name(), "total", elapsed_ms);
+                    if (elapsed_ms >= FLAGS_predict_slow_log_threshold_ms) {
+                        spdlog::warn("Slow predict request: model={} batch_count={} elapsed={}ms",
+                                     req.model_name(), req.payload_size(), (int64_t)elapsed_ms);
                     }
                     if (!ex.empty())
                         co_await respond_error(writer, absl::UnknownError(std::move(ex)));
