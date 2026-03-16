@@ -18,6 +18,7 @@
 #include <serving/converters.h>
 #include <serving/dense_feature_extraction_model.h>
 #include <serving/feature_extraction_model_input.h>
+#include <serving/metrics.h>
 #include <serving/ort_model.h>
 #include <serving/sparse_embedding_bag_model.h>
 #include <serving/sparse_feature_extraction_model.h>
@@ -25,6 +26,7 @@
 #include <serving/tabular_model.h>
 #include <common/threadpool.h>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 
@@ -51,6 +53,7 @@ class TabularModelContext {
     // inputs of crt model is unique set of inputs of all Fe models
     std::vector<std::string> inputs_;
     std::string version_;
+    std::string model_name_;
 };
 
 TabularModel::TabularModel() { context_ = std::make_unique<TabularModelContext>(); }
@@ -70,6 +73,7 @@ awaitable_status TabularModel::load(std::string dir_path) {
                 co_return absl::NotFoundError(
                     fmt::format("TabularModel cannot find dir {}", dir_path));
             }
+            context_->model_name_ = root_dir.filename().string();
             auto version_file = root_dir / "version.txt";
             if (!fs::is_regular_file(version_file)) {
                 co_return absl::NotFoundError(
@@ -217,6 +221,14 @@ std::unique_ptr<FeatureExtractionModelInput> get_input(ModelBase &fe_model,
 
 awaitable_result<std::unique_ptr<OrtModelOutput>>
 TabularModel::do_predict(std::unique_ptr<FeatureExtractionModelInput> input) {
+    const auto &model_name = context_->model_name_;
+    auto &metrics = Metrics::get_instance();
+    auto now = [] { return std::chrono::steady_clock::now(); };
+    auto elapsed_ms = [](std::chrono::steady_clock::time_point t0) {
+        return std::chrono::duration<double, std::milli>(
+                   std::chrono::steady_clock::now() - t0).count();
+    };
+
     // firstly execute sparse fe and lookup
     // set all output to ort input
     auto *fe_input = input.get();
@@ -226,17 +238,25 @@ TabularModel::do_predict(std::unique_ptr<FeatureExtractionModelInput> input) {
         if (!sub_input) {
             co_return absl::NotFoundError("Input not found for sparse fe model");
         }
+
+        auto t_fe = now();
         CO_ASSIGN_RESULT_OR_CO_RETURN_NOT_OK(auto fe_result,
                                              unit.fe_model.do_predict(std::move(sub_input)));
+        metrics.record_duration(model_name, "sparse_fe", elapsed_ms(t_fe));
+
         auto lookup_in = std::make_unique<SparseLookupModelInput>();
         CALL_AND_CO_RETURN_IF_STATUS_NOT_OK(
             unit.fe_to_lookup_converter->convert_input(std::move(fe_result), lookup_in.get()));
 
+        auto t_lookup = now();
         CO_ASSIGN_RESULT_OR_CO_RETURN_NOT_OK(auto lookup_result,
                                              unit.lookup_model.do_predict(std::move(lookup_in)));
+        metrics.record_duration(model_name, "sparse_lookup", elapsed_ms(t_lookup));
 
+        auto t_emb = now();
         CO_ASSIGN_RESULT_OR_CO_RETURN_NOT_OK(auto emb_ort_result,
                                              unit.emb_model.do_predict(std::move(lookup_result)));
+        metrics.record_duration(model_name, "sparse_emb", elapsed_ms(t_emb));
 
         // merge embedding bag output to ort_in
         for (auto &[name, v] : emb_ort_result->outputs) {
@@ -254,15 +274,22 @@ TabularModel::do_predict(std::unique_ptr<FeatureExtractionModelInput> input) {
         if (!sub_input) {
             co_return absl::NotFoundError("Input not found for dense fe model");
         }
+
+        auto t_dense = now();
         CO_ASSIGN_RESULT_OR_CO_RETURN_NOT_OK(
             auto fe_result, context_->dense_model.do_predict(std::move(sub_input)));
+        metrics.record_duration(model_name, "dense_fe", elapsed_ms(t_dense));
+
         CO_RETURN_IF_STATUS_NOT_OK(
             context_->dense_fe_to_ort_converter->convert_input(std::move(fe_result), ort_in.get()));
     }
 
     // finally execute ort model prediction
+    auto t_ort = now();
     CO_ASSIGN_RESULT_OR_CO_RETURN_NOT_OK(auto final_result,
                                          context_->ort_model.do_predict(std::move(ort_in)));
+    metrics.record_duration(model_name, "ort_compute", elapsed_ms(t_ort));
+
     co_return final_result;
 }
 

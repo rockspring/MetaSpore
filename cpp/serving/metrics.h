@@ -35,11 +35,18 @@ namespace metaspore::serving {
 //   metaspore_predict_requests_total{model, status}  -- Counter  (QPS via rate())
 //   metaspore_predict_duration_ms{model, stage}      -- Histogram
 //
-// Stages:
+// Stages (grpc_model_runner / grpc_server):
 //   total          end-to-end latency (grpc_server.cpp)
 //   convert_input  input conversion on grpc thread
 //   model_compute  co_spawn → compute_threadpool (includes queue wait + inference)
 //   convert_output output conversion on grpc thread
+//
+// TabularModel internal stages (tabular_model.cpp):
+//   sparse_fe      sparse feature extraction (per sparse unit, aggregated)
+//   sparse_lookup  sparse embedding table lookup (per sparse unit, aggregated)
+//   sparse_emb     sparse embedding bag ONNX inference (per sparse unit, aggregated)
+//   dense_fe       dense feature extraction (when present)
+//   ort_compute    final ONNX model inference
 //
 // HTTP endpoint: http://<grpc_listen_host>:<metrics_port>/metrics
 class Metrics {
