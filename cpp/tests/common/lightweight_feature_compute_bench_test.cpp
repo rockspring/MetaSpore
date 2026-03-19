@@ -63,7 +63,9 @@ static std::shared_ptr<arrow::RecordBatch> make_batch(int64_t rows, int64_t colu
             builder.Append(v);
         }
         auto array_result = builder.Finish();
-        ASSERT_TRUE(array_result.ok()) << array_result.status().ToString();
+        if (!array_result.ok()) {
+            throw std::runtime_error(array_result.status().ToString());
+        }
         arrays.push_back(*array_result);
         fields.push_back(arrow::field("c" + std::to_string(c), arrow::utf8()));
     }
@@ -106,7 +108,7 @@ static double bench_arrow_exec(const std::string &schema_source,
     status = FeatureSchemaParser::parse_hash_and_combine(is, exec, feature_count);
     EXPECT_TRUE(status.ok()) << status.ToString();
 
-    auto run_once = [&]() -> status {
+    auto run_once = [&]() -> metaspore::status {
         auto fn = [&]() -> awaitable_result<std::shared_ptr<arrow::RecordBatch>> {
             ASSIGN_RESULT_OR_CO_RETURN_NOT_OK(auto ctx, exec.start_plan());
             CALL_AND_CO_RETURN_IF_STATUS_NOT_OK(exec.set_input_schema(ctx, "t", batch->schema()));
