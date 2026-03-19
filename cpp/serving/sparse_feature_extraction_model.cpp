@@ -85,12 +85,12 @@ awaitable_status SparseFeatureExtractionModel::load(std::string dir_path) {
                     "SparseFeatureExtractionModel cannot find {}", schema_file.string()));
             }
             if (context_->use_lightweight) {
-                spdlog::info("use LightweightFeatureComputeExec")
+                spdlog::info("use LightweightFeatureComputeExec");
                 CALL_AND_CO_RETURN_IF_STATUS_NOT_OK(
                     LightweightSchemaParser::parse(schema_file.string(), context_->lightweight_exec));
                 context_->inputs_ = context_->lightweight_exec.get_input_names();
             } else {
-                spdlog::info("use FeatureComputeExec")
+                spdlog::info("use FeatureComputeExec");
                 CALL_AND_CO_RETURN_IF_STATUS_NOT_OK(
                     FeatureSchemaParser::parse(schema_file.string(), context_->arrow_exec));
                 context_->inputs_ = context_->arrow_exec.get_input_names();
