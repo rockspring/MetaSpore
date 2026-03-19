@@ -36,7 +36,7 @@ using boost::spirit::x3::char_;
 namespace fs = std::filesystem;
 
 // identifier rule for table name or column name
-auto ident = +(char_("a-zA-z_0-9"));
+static auto ident = +(char_("a-zA-z_0-9"));
 
 status LightweightSchemaParser::parse(const std::string &file, LightweightFeatureComputeExec &exec) {
     std::ifstream ifs(file);
