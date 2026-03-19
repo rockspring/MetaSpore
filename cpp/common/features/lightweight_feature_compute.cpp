@@ -27,6 +27,7 @@
 #include <arrow/status.h>
 
 #include <common/hash_utils.h>
+#include <common/arrow/arrow_status.h>
 #include <common/threadpool.h>
 
 #include <boost/asio/post.hpp>
@@ -166,34 +167,60 @@ LightweightFeatureCompute::execute(const std::shared_ptr<arrow::RecordBatch> &ba
             arrays.push_back(column_cache[(size_t)col_index]);
         }
 
+        auto to_absl = [](const arrow::Status &s) -> status {
+            return ArrowStatusToAbsl::arrow_status_to_absl(s);
+        };
+
         if (spec.columns.size() == 1) {
             arrow::UInt64Builder builder;
-            ARROW_RETURN_NOT_OK(builder.Reserve(rows));
+            auto s = builder.Reserve(rows);
+            if (!s.ok()) {
+                return to_absl(s);
+            }
             auto &arr = arrays[0];
             const uint64_t seed = spec.seeds[0];
             for (int64_t i = 0; i < rows; ++i) {
                 if (arr->IsNull(i)) {
-                    ARROW_RETURN_NOT_OK(builder.AppendNull());
+                    s = builder.AppendNull();
+                    if (!s.ok()) {
+                        return to_absl(s);
+                    }
                     continue;
                 }
                 auto view = arr->GetView(i);
                 if (view.empty()) {
-                    ARROW_RETURN_NOT_OK(builder.AppendNull());
+                    s = builder.AppendNull();
+                    if (!s.ok()) {
+                        return to_absl(s);
+                    }
                     continue;
                 }
                 uint64_t hash = BKDRHash(view.data(), view.length(), 0);
                 uint64_t out = BKDRHashOneField(seed, hash);
-                ARROW_RETURN_NOT_OK(builder.Append(out));
+                s = builder.Append(out);
+                if (!s.ok()) {
+                    return to_absl(s);
+                }
             }
-            ARROW_ASSIGN_OR_RAISE(auto array, builder.Finish());
+            auto array_result = builder.Finish();
+            if (!array_result.ok()) {
+                return to_absl(array_result.status());
+            }
+            auto array = *array_result;
             output_columns[spec_idx] = array;
             fields[spec_idx] = arrow::field("f" + std::to_string(spec_idx), arrow::uint64());
         } else {
             auto value_builder = std::make_shared<arrow::UInt64Builder>();
             arrow::ListBuilder builder(arrow::default_memory_pool(), value_builder,
                                        std::make_shared<arrow::ListType>(arrow::uint64()));
-            ARROW_RETURN_NOT_OK(builder.Reserve(rows));
-            ARROW_RETURN_NOT_OK(value_builder->Reserve(rows));
+            auto s = builder.Reserve(rows);
+            if (!s.ok()) {
+                return to_absl(s);
+            }
+            s = value_builder->Reserve(rows);
+            if (!s.ok()) {
+                return to_absl(s);
+            }
 
             for (int64_t i = 0; i < rows; ++i) {
                 bool any_null = false;
@@ -222,14 +249,27 @@ LightweightFeatureCompute::execute(const std::shared_ptr<arrow::RecordBatch> &ba
                 }
 
                 if (any_null || !has_value) {
-                    ARROW_RETURN_NOT_OK(builder.AppendNull());
+                    s = builder.AppendNull();
+                    if (!s.ok()) {
+                        return to_absl(s);
+                    }
                 } else {
-                    ARROW_RETURN_NOT_OK(builder.Append());
-                    ARROW_RETURN_NOT_OK(value_builder->Append(combined));
+                    s = builder.Append();
+                    if (!s.ok()) {
+                        return to_absl(s);
+                    }
+                    s = value_builder->Append(combined);
+                    if (!s.ok()) {
+                        return to_absl(s);
+                    }
                 }
             }
 
-            ARROW_ASSIGN_OR_RAISE(auto array, builder.Finish());
+            auto array_result = builder.Finish();
+            if (!array_result.ok()) {
+                return to_absl(array_result.status());
+            }
+            auto array = *array_result;
             output_columns[spec_idx] = array;
             fields[spec_idx] = arrow::field("f" + std::to_string(spec_idx),
                                             std::make_shared<arrow::ListType>(arrow::uint64()));
