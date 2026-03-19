@@ -16,11 +16,15 @@
 
 #include <common/features/lightweight_feature_compute_exec.h>
 
+#include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
 #include <future>
+#include <mutex>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
 #include <arrow/array.h>
 #include <arrow/builder.h>
@@ -38,6 +42,76 @@ namespace metaspore {
 DECLARE_uint64(lightweight_min_parallel_rules);
 DECLARE_uint64(lightweight_max_workers);
 DECLARE_uint64(background_thread_num);
+
+namespace {
+
+class ExecuteLatencyStats {
+  public:
+    void observe_us(int64_t us) {
+        if (us < 0) {
+            return;
+        }
+        ensure_started();
+        std::lock_guard<std::mutex> lk(mu_);
+        samples_us_.push_back(us);
+    }
+
+  private:
+    void ensure_started() {
+        std::call_once(start_once_, [this]() {
+            samples_us_.reserve(4096);
+            std::thread([this]() { report_loop(); }).detach();
+        });
+    }
+
+    void report_loop() {
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::minutes(1));
+            std::vector<int64_t> snapshot;
+            {
+                std::lock_guard<std::mutex> lk(mu_);
+                snapshot.swap(samples_us_);
+            }
+
+            if (snapshot.empty()) {
+                spdlog::info(
+                    "LightweightFeatureComputeExec::execute latency last_minute: count=0");
+                continue;
+            }
+
+            std::sort(snapshot.begin(), snapshot.end());
+            long double sum_us = 0;
+            for (int64_t v : snapshot) {
+                sum_us += static_cast<long double>(v);
+            }
+            const size_t n = snapshot.size();
+            const long double avg_us = sum_us / static_cast<long double>(n);
+
+            // p99 using nearest-rank (ceil(p/100 * n)), converted to 0-based.
+            const size_t p99_index =
+                std::min(n - 1, static_cast<size_t>((n * 99 + 99) / 100 - 1));
+            const int64_t p99_us = snapshot[p99_index];
+            const int64_t max_us = snapshot.back();
+
+            spdlog::info(
+                "LightweightFeatureComputeExec::execute latency last_minute: count={}, avg_ms={:.3f}, p99_ms={:.3f}, max_ms={:.3f}",
+                n, static_cast<double>(avg_us) / 1000.0,
+                static_cast<double>(p99_us) / 1000.0,
+                static_cast<double>(max_us) / 1000.0);
+        }
+    }
+
+    std::once_flag start_once_;
+    std::mutex mu_;
+    std::vector<int64_t> samples_us_;
+};
+
+ExecuteLatencyStats &GetExecuteLatencyStats() {
+    static ExecuteLatencyStats stats;
+    return stats;
+}
+
+} // namespace
 
 status LightweightFeatureComputeExec::add_source(const std::string &name) {
     if (name.empty()) {
@@ -88,6 +162,7 @@ static status ensure_string_array(const std::shared_ptr<arrow::Array> &array,
 result<std::shared_ptr<arrow::RecordBatch>>
 LightweightFeatureComputeExec::execute(
     const std::shared_ptr<arrow::RecordBatch> &batch) const {
+    const auto start_time = std::chrono::steady_clock::now();
     if (!batch) {
         return absl::InvalidArgumentError("LightweightFeatureComputeExec input batch is null");
     }
@@ -325,13 +400,13 @@ LightweightFeatureComputeExec::execute(
 
     auto schema = std::make_shared<arrow::Schema>(std::move(fields));
     const int64_t out_cols = static_cast<int64_t>(output_columns.size());
-    spdlog::info(
+    spdlog::debug(
         "LightweightFeatureComputeExec output schema built: rows={}, cols={}, schema={}",
         rows, out_cols, schema ? schema->ToString() : std::string("<null>"));
 
     auto out_batch =
         arrow::RecordBatch::Make(std::move(schema), rows, std::move(output_columns));
-    spdlog::info("LightweightFeatureComputeExec output RecordBatch: ptr={}, rows={}, cols={}",
+    spdlog::debug("LightweightFeatureComputeExec output RecordBatch: ptr={}, rows={}, cols={}",
                  static_cast<const void *>(out_batch.get()),
                  out_batch ? out_batch->num_rows() : -1,
                  out_batch ? out_batch->num_columns() : -1);
@@ -342,6 +417,10 @@ LightweightFeatureComputeExec::execute(
                          validate_status.ToString());
         }
     }
+    const auto end_time = std::chrono::steady_clock::now();
+    const auto elapsed_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
+    GetExecuteLatencyStats().observe_us(static_cast<int64_t>(elapsed_us));
     return out_batch;
 }
 
