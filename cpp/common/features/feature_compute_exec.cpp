@@ -146,7 +146,7 @@ class FeatureComputeExecContext {
     std::shared_ptr<cp::Declaration> root_decl_;
     cp::ExecNode *root_node_{nullptr};
     cp::ExecNode *root_before_sink_node_{nullptr};
-    channel_type channel_{Threadpools::get_compute_threadpool(), 10};
+    channel_type channel_{Threadpools::get_fe_compute_threadpool(), 10};
     arrow::Future<> sink_future_{arrow::Future<>::Make()};
     std::shared_ptr<cp::ExecPlan> plan_;
 };

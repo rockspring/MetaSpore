@@ -23,6 +23,7 @@
 namespace metaspore {
 
 DECLARE_uint64(compute_thread_num);
+DECLARE_uint64(fe_compute_thread_num);
 DECLARE_uint64(background_thread_num);
 
 using threadpool = boost::asio::thread_pool;
@@ -31,6 +32,11 @@ class Threadpools {
   public:
     static threadpool &get_compute_threadpool() {
         static threadpool tp(get_compute_thread_num());
+        return tp;
+    }
+
+    static threadpool &get_fe_compute_threadpool() {
+        static threadpool tp(get_fe_compute_thread_num());
         return tp;
     }
 
@@ -45,6 +51,13 @@ class Threadpools {
         if (str)
             return std::stoi(str);
         return FLAGS_compute_thread_num;
+    }
+
+    static int get_fe_compute_thread_num() {
+        const char* str = getenv("METASPORE_FE_COMPUTE_THREAD_NUM");
+        if (str)
+            return std::stoi(str);
+        return FLAGS_fe_compute_thread_num;
     }
 
     static int get_background_thread_num() {

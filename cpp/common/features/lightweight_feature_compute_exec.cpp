@@ -40,7 +40,7 @@
 namespace metaspore {
 
 DECLARE_uint64(lightweight_min_parallel_rules);
-DECLARE_uint64(lightweight_max_workers);
+DECLARE_uint64(fe_compute_thread_num);
 DECLARE_uint64(background_thread_num);
 
 namespace {
@@ -345,10 +345,7 @@ LightweightFeatureComputeExec::execute(
     const uint64_t min_parallel_rules = get_env_u64(
         "METASPORE_LIGHTWEIGHT_MIN_PARALLEL_RULES", FLAGS_lightweight_min_parallel_rules);
     size_t max_workers = static_cast<size_t>(
-        get_env_u64("METASPORE_LIGHTWEIGHT_MAX_WORKERS", FLAGS_lightweight_max_workers));
-    if (max_workers == 0) {
-        max_workers = static_cast<size_t>(FLAGS_background_thread_num);
-    }
+        get_env_u64("METASPORE_FE_COMPUTE_THREAD_NUM", FLAGS_fe_compute_thread_num));
     if (max_workers == 0) {
         max_workers = std::max<size_t>(1, std::thread::hardware_concurrency());
     }
@@ -362,7 +359,7 @@ LightweightFeatureComputeExec::execute(
             CALL_AND_RETURN_IF_STATUS_NOT_OK(compute_one(i));
         }
     } else {
-        auto &tp = Threadpools::get_background_threadpool();
+        auto &tp = Threadpools::get_fe_compute_threadpool();
         size_t chunk = (specs_.size() + worker_count - 1) / worker_count;
         std::vector<std::promise<status>> promises(worker_count);
         std::vector<std::future<status>> futures;
