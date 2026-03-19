@@ -145,7 +145,7 @@ TEST(LightweightFeatureComputeBenchTest, CompareWithArrowExec) {
     const int warmup = 2;
     const int iters = 5;
     auto schema_source = make_schema_source(rules, columns);
-    fmt.print("schema_source is\n{}\n", schema_source);
+    fmt::print("schema_source is\n{}\n", schema_source);
 
     std::vector<int64_t> batch_sizes = {32, 64, 128, 1024, 4096};
     for (auto rows : batch_sizes) {
