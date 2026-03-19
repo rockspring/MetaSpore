@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+#include <common/features/feature_compute_exec.h>
 #include <common/features/lightweight_feature_compute.h>
 
 namespace metaspore {
@@ -38,7 +39,9 @@ private:
     std::string source_table_name_;
     std::string schema_source_;
     int feature_count_;
-    LightweightFeatureCompute executor_;
+    bool use_lightweight_;
+    LightweightFeatureCompute lightweight_executor_;
+    FeatureComputeExec arrow_executor_;
 };
 
 } // namespace metaspore
