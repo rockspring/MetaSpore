@@ -14,16 +14,35 @@
 // limitations under the License.
 //
 
-#include <gflags/gflags.h>
+#pragma once
+
+#include <istream>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <arrow/record_batch.h>
+
+#include <common/types.h>
 
 namespace metaspore {
 
-DEFINE_int32(log_level, 2, "Global log level");
-DEFINE_uint64(compute_thread_num, 4UL, "Thread number for computing");
-DEFINE_uint64(background_thread_num, 2UL, "Thread number for background tasks");
-DEFINE_uint64(lightweight_min_parallel_rules, 8UL,
-              "Minimum rule count to enable lightweight feature compute parallelism");
-DEFINE_uint64(lightweight_max_workers, 0UL,
-              "Max worker threads for lightweight feature compute (0 uses background thread num)");
+class LightweightFeatureCompute {
+  public:
+    LightweightFeatureCompute() = default;
+
+    status parse_schema(std::istream &is, int &feature_count);
+
+    result<std::shared_ptr<arrow::RecordBatch>>
+    execute(const std::shared_ptr<arrow::RecordBatch> &batch) const;
+
+  private:
+    struct FeatureSpec {
+        std::vector<std::string> columns;
+        std::vector<uint64_t> seeds;
+    };
+
+    std::vector<FeatureSpec> specs_;
+};
 
 } // namespace metaspore
