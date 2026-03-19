@@ -32,10 +32,9 @@
 
 #include <boost/asio/post.hpp>
 
+namespace metaspore {
 DECLARE_uint64(lightweight_min_parallel_rules);
 DECLARE_uint64(lightweight_max_workers);
-
-namespace metaspore {
 
 static inline bool is_ident_char(char c) {
     return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
