@@ -25,7 +25,5 @@ DEFINE_uint64(lightweight_min_parallel_rules, 8UL,
               "Minimum rule count to enable lightweight feature compute parallelism");
 DEFINE_uint64(lightweight_max_workers, 0UL,
               "Max worker threads for lightweight feature compute (0 uses background thread num)");
-DEFINE_bool(use_lightweight_feature_compute, true,
-            "Use LightweightFeatureCompute for sparse feature extraction");
 
 } // namespace metaspore

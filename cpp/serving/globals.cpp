@@ -25,5 +25,6 @@ DEFINE_uint64(grpc_client_threads, 4UL, "Thread number for grpc clients");
 DEFINE_string(grpc_listen_host, "0.0.0.0", "Listen host for grpc service");
 DEFINE_string(grpc_listen_port, "50051", "Listen port for grpc service");
 DEFINE_string(init_load_path, ".", "Load path to init during start");
-
+DEFINE_bool(use_lightweight_feature_compute, true,
+            "Use LightweightFeatureCompute for sparse feature extraction");
 } // namespace metaspore::serving
