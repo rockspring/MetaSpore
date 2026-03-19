@@ -59,7 +59,7 @@ static std::shared_ptr<arrow::RecordBatch> make_batch(int64_t rows, int64_t colu
         arrow::StringBuilder builder;
         builder.Reserve(rows);
         for (int64_t r = 0; r < rows; ++r) {
-            std::string v = "v" + std::to_string(c) + "_" + std::to_string(r);
+            std::string v = "vvvvvv" + std::to_string(c) + "_" + std::to_string(r);
             builder.Append(v);
         }
         auto array_result = builder.Finish();
@@ -140,13 +140,14 @@ static double bench_arrow_exec(const std::string &schema_source,
 }
 
 TEST(LightweightFeatureComputeBenchTest, CompareWithArrowExec) {
-    const int rules = 300;
-    const int columns = 320;
+    const int rules = 341;
+    const int columns = 340;
     const int warmup = 2;
     const int iters = 5;
     auto schema_source = make_schema_source(rules, columns);
+    fmt.print("schema_source is\n{}\n", schema_source);
 
-    std::vector<int64_t> batch_sizes = {128, 1024, 4096};
+    std::vector<int64_t> batch_sizes = {32, 64, 128, 1024, 4096};
     for (auto rows : batch_sizes) {
         auto batch = make_batch(rows, columns);
         double lw_ms = bench_lightweight(schema_source, batch, warmup, iters);
