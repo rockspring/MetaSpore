@@ -15,8 +15,10 @@
 //
 
 #include <chrono>
+#include <algorithm>
 #include <sstream>
 #include <string>
+#include <stdexcept>
 #include <vector>
 
 #include <arrow/array.h>
@@ -26,7 +28,8 @@
 #include <boost/asio/use_future.hpp>
 #include <fmt/format.h>
 #include <common/features/feature_compute_exec.h>
-#include <common/features/lightweight_feature_compute.h>
+#include <common/features/lightweight_feature_compute_exec.h>
+#include <common/features/lightweight_schema_parser.h>
 #include <common/features/schema_parser.h>
 #include <common/test_utils.h>
 #include <common/threadpool.h>
@@ -76,10 +79,10 @@ static std::shared_ptr<arrow::RecordBatch> make_batch(int64_t rows, int64_t colu
 static double bench_lightweight(const std::string &schema_source,
                                 const std::shared_ptr<arrow::RecordBatch> &batch,
                                 int warmup, int iters) {
-    LightweightFeatureCompute compute;
+    LightweightFeatureComputeExec compute;
     int feature_count = 0;
     std::istringstream is(schema_source);
-    auto status = compute.parse_schema(is, feature_count);
+    auto status = LightweightSchemaParser::parse_hash_and_combine(is, compute, feature_count);
     EXPECT_TRUE(status.ok()) << status.ToString();
 
     for (int i = 0; i < warmup; ++i) {

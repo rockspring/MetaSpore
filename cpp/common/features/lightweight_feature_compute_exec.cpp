@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 
-#include <common/features/lightweight_feature_compute.h>
+#include <common/features/lightweight_feature_compute_exec.h>
 
 #include <cctype>
 #include <cstdlib>
@@ -26,78 +26,50 @@
 #include <arrow/builder.h>
 #include <arrow/status.h>
 
-#include <common/hash_utils.h>
 #include <common/arrow/arrow_status.h>
+#include <common/hash_utils.h>
 #include <common/threadpool.h>
 
 #include <boost/asio/post.hpp>
 
 namespace metaspore {
+
 DECLARE_uint64(lightweight_min_parallel_rules);
 DECLARE_uint64(lightweight_max_workers);
+DECLARE_uint64(background_thread_num);
 
-static inline bool is_ident_char(char c) {
-    return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+status LightweightFeatureComputeExec::add_source(const std::string &name) {
+    if (name.empty()) {
+        return absl::InvalidArgumentError(
+            "LightweightFeatureComputeExec input name cannot be empty");
+    }
+    if (!input_names_.empty() && input_names_[0] == name) {
+        return absl::OkStatus();
+    }
+    if (!input_names_.empty()) {
+        return absl::AlreadyExistsError(
+            "LightweightFeatureComputeExec only supports one input source");
+    }
+    input_names_.push_back(name);
+    return absl::OkStatus();
 }
 
-static inline void trim_schema_line(std::string &line) {
-    auto is_trim = [](char c) {
-        return c == '#' || c == ' ' || c == '\t' || c == '\n' || c == '\r';
-    };
-    while (!line.empty() && is_trim(line.front())) {
-        line.erase(line.begin());
-    }
-    while (!line.empty() && is_trim(line.back())) {
-        line.pop_back();
-    }
-}
-
-static bool parse_combine_line(const std::string &line, std::vector<std::string> &out_columns) {
-    out_columns.clear();
-    std::string token;
-    for (size_t i = 0; i <= line.size(); ++i) {
-        if (i == line.size() || line[i] == '#') {
-            if (token.empty()) {
-                return false;
-            }
-            for (char c : token) {
-                if (!is_ident_char(c)) {
-                    return false;
-                }
-            }
-            out_columns.push_back(token);
-            token.clear();
-        } else {
-            token.push_back(line[i]);
-        }
-    }
-    return !out_columns.empty();
-}
-
-status LightweightFeatureCompute::parse_schema(std::istream &is, int &feature_count) {
+status LightweightFeatureComputeExec::add_projection(
+    std::vector<std::vector<std::string>> columns) {
     specs_.clear();
-    feature_count = 0;
-
-    std::string line;
-    std::vector<std::string> columns;
-    while (std::getline(is, line)) {
-        trim_schema_line(line);
-        if (line.empty()) {
-            break;
+    specs_.reserve(columns.size());
+    for (auto &cols : columns) {
+        if (cols.empty()) {
+            return absl::InvalidArgumentError(
+                "LightweightFeatureComputeExec projection column list is empty");
         }
-
-        if (!parse_combine_line(line, columns)) {
-            return absl::InvalidArgumentError("Parsing combine rule failed " + line);
-        }
-
         FeatureSpec spec;
-        spec.columns = columns;
-        spec.seeds.reserve(columns.size());
-        for (const auto &name : columns) {
+        spec.columns = std::move(cols);
+        spec.seeds.reserve(spec.columns.size());
+        for (const auto &name : spec.columns) {
             spec.seeds.push_back(BKDRHashWithEqualPostfix(name.c_str(), name.size(), 0));
         }
         specs_.push_back(std::move(spec));
-        feature_count++;
     }
     return absl::OkStatus();
 }
@@ -106,15 +78,20 @@ static status ensure_string_array(const std::shared_ptr<arrow::Array> &array,
                                   std::shared_ptr<arrow::StringArray> &out) {
     out = std::dynamic_pointer_cast<arrow::StringArray>(array);
     if (!out) {
-        return absl::InvalidArgumentError("LightweightFeatureCompute only supports string input");
+        return absl::InvalidArgumentError(
+            "LightweightFeatureComputeExec only supports string input");
     }
     return absl::OkStatus();
 }
 
 result<std::shared_ptr<arrow::RecordBatch>>
-LightweightFeatureCompute::execute(const std::shared_ptr<arrow::RecordBatch> &batch) const {
+LightweightFeatureComputeExec::execute(
+    const std::shared_ptr<arrow::RecordBatch> &batch) const {
     if (!batch) {
-        return absl::InvalidArgumentError("LightweightFeatureCompute input batch is null");
+        return absl::InvalidArgumentError("LightweightFeatureComputeExec input batch is null");
+    }
+    if (specs_.empty()) {
+        return absl::InvalidArgumentError("LightweightFeatureComputeExec has no projections");
     }
 
     const int64_t rows = batch->num_rows();
@@ -135,7 +112,8 @@ LightweightFeatureCompute::execute(const std::shared_ptr<arrow::RecordBatch> &ba
     for (size_t spec_idx = 0; spec_idx < specs_.size(); ++spec_idx) {
         const auto &spec = specs_[spec_idx];
         if (spec.columns.empty()) {
-            return absl::InvalidArgumentError("LightweightFeatureCompute feature spec is empty");
+            return absl::InvalidArgumentError(
+                "LightweightFeatureComputeExec feature spec is empty");
         }
 
         std::vector<int> indices;
@@ -143,7 +121,8 @@ LightweightFeatureCompute::execute(const std::shared_ptr<arrow::RecordBatch> &ba
         for (const auto &name : spec.columns) {
             auto it = name_to_index.find(name);
             if (it == name_to_index.end()) {
-                return absl::NotFoundError("LightweightFeatureCompute cannot find column " + name);
+                return absl::NotFoundError(
+                    "LightweightFeatureComputeExec cannot find column " + name);
             }
             int col_index = it->second;
             if (!column_cache[(size_t)col_index]) {
@@ -205,8 +184,7 @@ LightweightFeatureCompute::execute(const std::shared_ptr<arrow::RecordBatch> &ba
             if (!array_result.ok()) {
                 return to_absl(array_result.status());
             }
-            auto array = *array_result;
-            output_columns[spec_idx] = array;
+            output_columns[spec_idx] = *array_result;
             fields[spec_idx] = arrow::field("f" + std::to_string(spec_idx), arrow::uint64());
         } else {
             auto value_builder = std::make_shared<arrow::UInt64Builder>();
@@ -268,8 +246,7 @@ LightweightFeatureCompute::execute(const std::shared_ptr<arrow::RecordBatch> &ba
             if (!array_result.ok()) {
                 return to_absl(array_result.status());
             }
-            auto array = *array_result;
-            output_columns[spec_idx] = array;
+            output_columns[spec_idx] = *array_result;
             fields[spec_idx] = arrow::field("f" + std::to_string(spec_idx),
                                             std::make_shared<arrow::ListType>(arrow::uint64()));
         }
@@ -291,8 +268,8 @@ LightweightFeatureCompute::execute(const std::shared_ptr<arrow::RecordBatch> &ba
 
     const uint64_t min_parallel_rules = get_env_u64(
         "METASPORE_LIGHTWEIGHT_MIN_PARALLEL_RULES", FLAGS_lightweight_min_parallel_rules);
-    size_t max_workers = static_cast<size_t>(get_env_u64(
-        "METASPORE_LIGHTWEIGHT_MAX_WORKERS", FLAGS_lightweight_max_workers));
+    size_t max_workers = static_cast<size_t>(
+        get_env_u64("METASPORE_LIGHTWEIGHT_MAX_WORKERS", FLAGS_lightweight_max_workers));
     if (max_workers == 0) {
         max_workers = static_cast<size_t>(FLAGS_background_thread_num);
     }
@@ -347,6 +324,10 @@ LightweightFeatureCompute::execute(const std::shared_ptr<arrow::RecordBatch> &ba
 
     auto schema = std::make_shared<arrow::Schema>(std::move(fields));
     return arrow::RecordBatch::Make(std::move(schema), rows, std::move(output_columns));
+}
+
+std::vector<std::string> LightweightFeatureComputeExec::get_input_names() const {
+    return input_names_;
 }
 
 } // namespace metaspore

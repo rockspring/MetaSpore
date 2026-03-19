@@ -16,7 +16,6 @@
 
 #pragma once
 
-#include <istream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -27,14 +26,18 @@
 
 namespace metaspore {
 
-class LightweightFeatureCompute {
+class LightweightFeatureComputeExec {
   public:
-    LightweightFeatureCompute() = default;
+    LightweightFeatureComputeExec() = default;
 
-    status parse_schema(std::istream &is, int &feature_count);
+    status add_source(const std::string &name);
+
+    status add_projection(std::vector<std::vector<std::string>> columns);
 
     result<std::shared_ptr<arrow::RecordBatch>>
     execute(const std::shared_ptr<arrow::RecordBatch> &batch) const;
+
+    std::vector<std::string> get_input_names() const;
 
   private:
     struct FeatureSpec {
@@ -42,6 +45,7 @@ class LightweightFeatureCompute {
         std::vector<uint64_t> seeds;
     };
 
+    std::vector<std::string> input_names_;
     std::vector<FeatureSpec> specs_;
 };
 
