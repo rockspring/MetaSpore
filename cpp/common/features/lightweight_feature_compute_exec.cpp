@@ -28,6 +28,7 @@
 
 #include <common/arrow/arrow_status.h>
 #include <common/hash_utils.h>
+#include <common/logger.h>
 #include <common/threadpool.h>
 
 #include <boost/asio/post.hpp>
@@ -323,7 +324,25 @@ LightweightFeatureComputeExec::execute(
     }
 
     auto schema = std::make_shared<arrow::Schema>(std::move(fields));
-    return arrow::RecordBatch::Make(std::move(schema), rows, std::move(output_columns));
+    const int64_t out_cols = static_cast<int64_t>(output_columns.size());
+    spdlog::info(
+        "LightweightFeatureComputeExec output schema built: rows={}, cols={}, schema={}",
+        rows, out_cols, schema ? schema->ToString() : std::string("<null>"));
+
+    auto out_batch =
+        arrow::RecordBatch::Make(std::move(schema), rows, std::move(output_columns));
+    spdlog::info("LightweightFeatureComputeExec output RecordBatch: ptr={}, rows={}, cols={}",
+                 static_cast<const void *>(out_batch.get()),
+                 out_batch ? out_batch->num_rows() : -1,
+                 out_batch ? out_batch->num_columns() : -1);
+    if (out_batch) {
+        const auto validate_status = out_batch->Validate();
+        if (!validate_status.ok()) {
+            spdlog::warn("LightweightFeatureComputeExec output RecordBatch validate failed: {}",
+                         validate_status.ToString());
+        }
+    }
+    return out_batch;
 }
 
 std::vector<std::string> LightweightFeatureComputeExec::get_input_names() const {
