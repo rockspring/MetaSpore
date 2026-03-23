@@ -40,25 +40,30 @@ class OrtModelGlobal {
         OrtThreadingOptions *tp_options = nullptr;
         Ort::ThrowOnError(Ort::GetApi().CreateThreadingOptions(&tp_options));
 
-        Ort::GetApi().SetGlobalCustomCreateThreadFn(tp_options, [](void *, OrtCustomThreadHandle (*start)(void *), void *arg) -> OrtCustomThreadHandle {
-            static std::atomic<int> idx{0};
-            auto *t = new std::thread([start, arg] {
-                char name[16];
-                std::snprintf(name, sizeof(name), "ort_worker_%d", idx.fetch_add(1));
+        Ort::ThrowOnError(Ort::GetApi().SetGlobalCustomCreateThreadFn(
+            tp_options,
+            [](void *, void (*start)(void *), void *arg) -> OrtCustomThreadHandle {
+                static std::atomic<int> idx{0};
+                auto *t = new std::thread([start, arg] {
+                    char name[16];
+                    std::snprintf(name, sizeof(name), "ort_worker_%d", idx.fetch_add(1));
 #ifdef __linux__
-                pthread_setname_np(pthread_self(), name);
+                    pthread_setname_np(pthread_self(), name);
 #endif
-                start(arg);
-            });
-            return reinterpret_cast<OrtCustomThreadHandle>(t);
-        });
+                    start(arg);
+                });
+                return reinterpret_cast<OrtCustomThreadHandle>(t);
+            }));
 
-        Ort::GetApi().SetGlobalCustomJoinThreadFn(tp_options, [](OrtCustomThreadHandle handle) {
-            auto *t = reinterpret_cast<std::thread *>(handle);
-            if (t->joinable())
-                t->join();
-            delete t;
-        });
+        Ort::ThrowOnError(Ort::GetApi().SetGlobalCustomJoinThreadFn(
+            tp_options,
+            [](OrtCustomThreadHandle handle) {
+                auto *t = reinterpret_cast<std::thread *>(
+                    const_cast<OrtCustomHandleType *>(handle));
+                if (t->joinable())
+                    t->join();
+                delete t;
+            }));
 
         env_ = Ort::Env(tp_options, ORT_LOGGING_LEVEL_WARNING, "metaspore");
         Ort::GetApi().ReleaseThreadingOptions(tp_options);
