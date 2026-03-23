@@ -40,6 +40,9 @@ class OrtModelGlobal {
         OrtThreadingOptions *tp_options = nullptr;
         Ort::ThrowOnError(Ort::GetApi().CreateThreadingOptions(&tp_options));
 
+        Ort::ThrowOnError(Ort::GetApi().SetGlobalIntraOpNumThreads(tp_options, FLAGS_ort_intraop_thread_num));
+        Ort::ThrowOnError(Ort::GetApi().SetGlobalInterOpNumThreads(tp_options, FLAGS_ort_interop_thread_num));
+
         Ort::ThrowOnError(Ort::GetApi().SetGlobalCustomCreateThreadFn(
             tp_options,
             [](void *, void (*start)(void *), void *arg) -> OrtCustomThreadHandle {
@@ -81,8 +84,7 @@ class OrtModelContext {
   public:
     OrtModelContext() : run_options_(), session_options_(), session_(nullptr) {
         session_options_.SetExecutionMode(ExecutionMode::ORT_PARALLEL);
-        session_options_.SetInterOpNumThreads(FLAGS_ort_interop_thread_num);
-        session_options_.SetIntraOpNumThreads(FLAGS_ort_intraop_thread_num);
+        session_options_.DisablePerSessionThreads();
         session_options_.DisableCpuMemArena();
         session_options_.DisableMemPattern();
     }
