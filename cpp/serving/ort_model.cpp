@@ -34,43 +34,31 @@ namespace metaspore::serving {
 DECLARE_uint64(ort_intraop_thread_num);
 DECLARE_uint64(ort_interop_thread_num);
 
+static std::atomic<int> g_ort_thread_idx{0};
+
+static OrtCustomThreadHandle ort_custom_create_thread(void *, void (*start)(void *), void *arg) {
+    auto *t = new std::thread([start, arg] {
+        char name[16];
+        std::snprintf(name, sizeof(name), "ort_worker_%d", g_ort_thread_idx.fetch_add(1));
+#ifdef __linux__
+        pthread_setname_np(pthread_self(), name);
+#endif
+        start(arg);
+    });
+    return reinterpret_cast<OrtCustomThreadHandle>(t);
+}
+
+static void ort_custom_join_thread(OrtCustomThreadHandle handle) {
+    auto *t = reinterpret_cast<std::thread *>(
+        const_cast<OrtCustomHandleType *>(handle));
+    if (t->joinable())
+        t->join();
+    delete t;
+}
+
 class OrtModelGlobal {
   public:
-    OrtModelGlobal() {
-        OrtThreadingOptions *tp_options = nullptr;
-        Ort::ThrowOnError(Ort::GetApi().CreateThreadingOptions(&tp_options));
-
-        Ort::ThrowOnError(Ort::GetApi().SetGlobalIntraOpNumThreads(tp_options, FLAGS_ort_intraop_thread_num));
-        Ort::ThrowOnError(Ort::GetApi().SetGlobalInterOpNumThreads(tp_options, FLAGS_ort_interop_thread_num));
-
-        Ort::ThrowOnError(Ort::GetApi().SetGlobalCustomCreateThreadFn(
-            tp_options,
-            [](void *, void (*start)(void *), void *arg) -> OrtCustomThreadHandle {
-                static std::atomic<int> idx{0};
-                auto *t = new std::thread([start, arg] {
-                    char name[16];
-                    std::snprintf(name, sizeof(name), "ort_worker_%d", idx.fetch_add(1));
-#ifdef __linux__
-                    pthread_setname_np(pthread_self(), name);
-#endif
-                    start(arg);
-                });
-                return reinterpret_cast<OrtCustomThreadHandle>(t);
-            }));
-
-        Ort::ThrowOnError(Ort::GetApi().SetGlobalCustomJoinThreadFn(
-            tp_options,
-            [](OrtCustomThreadHandle handle) {
-                auto *t = reinterpret_cast<std::thread *>(
-                    const_cast<OrtCustomHandleType *>(handle));
-                if (t->joinable())
-                    t->join();
-                delete t;
-            }));
-
-        env_ = Ort::Env(tp_options, ORT_LOGGING_LEVEL_WARNING, "metaspore");
-        Ort::GetApi().ReleaseThreadingOptions(tp_options);
-    }
+    OrtModelGlobal() : env_() {}
 
     Ort::Env env_;
 };
@@ -84,7 +72,10 @@ class OrtModelContext {
   public:
     OrtModelContext() : run_options_(), session_options_(), session_(nullptr) {
         session_options_.SetExecutionMode(ExecutionMode::ORT_PARALLEL);
-        session_options_.DisablePerSessionThreads();
+        session_options_.SetInterOpNumThreads(FLAGS_ort_interop_thread_num);
+        session_options_.SetIntraOpNumThreads(FLAGS_ort_intraop_thread_num);
+        session_options_.SetCustomCreateThreadFn(ort_custom_create_thread);
+        session_options_.SetCustomJoinThreadFn(ort_custom_join_thread);
         session_options_.DisableCpuMemArena();
         session_options_.DisableMemPattern();
     }
