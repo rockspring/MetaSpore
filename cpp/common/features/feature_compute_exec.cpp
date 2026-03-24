@@ -16,6 +16,9 @@
 
 #include <unordered_map>
 
+#include <algorithm>
+#include <vector>
+
 #include <common/logger.h>
 #include <common/features/feature_compute_exec.h>
 #include <common/threadpool.h>

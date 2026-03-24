@@ -28,4 +28,6 @@ DEFINE_string(init_load_path, ".", "Load path to init during start");
 DEFINE_uint64(predict_slow_log_threshold_ms, 5000UL, "Slow request threshold in milliseconds for predict logging");
 DEFINE_uint32(metrics_port, 8080, "HTTP port for Prometheus metrics endpoint (/metrics); set 0 to disable");
 
+DEFINE_bool(use_lightweight_feature_compute, true,
+            "Use LightweightFeatureCompute for sparse feature extraction");
 } // namespace metaspore::serving
