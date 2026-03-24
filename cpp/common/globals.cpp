@@ -22,9 +22,9 @@ DEFINE_int32(log_level, 2, "Global log level");
 DEFINE_uint64(compute_thread_num, 4UL, "Thread number for computing");
 DEFINE_uint64(fe_compute_thread_num, 4UL, "Thread number for fe computing");
 DEFINE_uint64(background_thread_num, 2UL, "Thread number for background tasks");
-DEFINE_uint64(lightweight_min_parallel_rules, 8UL,
+DEFINE_uint64(lightweight_feature_compute_min_parallel_rules, 512UL,
               "Minimum rule count to enable lightweight feature compute parallelism");
-DEFINE_uint64(lightweight_max_workers, 0UL,
-              "Max worker threads for lightweight feature compute (0 uses background thread num)");
+DEFINE_uint64(lightweight_feature_compute_parallelism, 1UL,
+              "parallelism for lightweight feature compute");
 
 } // namespace metaspore

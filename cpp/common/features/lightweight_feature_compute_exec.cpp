@@ -18,10 +18,8 @@
 
 #include <algorithm>
 #include <cctype>
-#include <chrono>
 #include <cstdlib>
 #include <future>
-#include <mutex>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -40,78 +38,8 @@
 namespace metaspore {
 
 DECLARE_uint64(lightweight_min_parallel_rules);
-DECLARE_uint64(fe_compute_thread_num);
+DECLARE_uint64(lightweight_feature_compute_parallelism);
 DECLARE_uint64(background_thread_num);
-
-namespace {
-
-class ExecuteLatencyStats {
-  public:
-    void observe_us(int64_t us) {
-        if (us < 0) {
-            return;
-        }
-        ensure_started();
-        std::lock_guard<std::mutex> lk(mu_);
-        samples_us_.push_back(us);
-    }
-
-  private:
-    void ensure_started() {
-        std::call_once(start_once_, [this]() {
-            samples_us_.reserve(4096);
-            std::thread([this]() { report_loop(); }).detach();
-        });
-    }
-
-    void report_loop() {
-        for (;;) {
-            std::this_thread::sleep_for(std::chrono::minutes(1));
-            std::vector<int64_t> snapshot;
-            {
-                std::lock_guard<std::mutex> lk(mu_);
-                snapshot.swap(samples_us_);
-            }
-
-            if (snapshot.empty()) {
-                spdlog::info(
-                    "LightweightFeatureComputeExec::execute latency last_minute: count=0");
-                continue;
-            }
-
-            std::sort(snapshot.begin(), snapshot.end());
-            long double sum_us = 0;
-            for (int64_t v : snapshot) {
-                sum_us += static_cast<long double>(v);
-            }
-            const size_t n = snapshot.size();
-            const long double avg_us = sum_us / static_cast<long double>(n);
-
-            // p99 using nearest-rank (ceil(p/100 * n)), converted to 0-based.
-            const size_t p99_index =
-                std::min(n - 1, static_cast<size_t>((n * 99 + 99) / 100 - 1));
-            const int64_t p99_us = snapshot[p99_index];
-            const int64_t max_us = snapshot.back();
-
-            spdlog::info(
-                "LightweightFeatureComputeExec::execute latency last_minute: count={}, avg_ms={:.3f}, p99_ms={:.3f}, max_ms={:.3f}",
-                n, static_cast<double>(avg_us) / 1000.0,
-                static_cast<double>(p99_us) / 1000.0,
-                static_cast<double>(max_us) / 1000.0);
-        }
-    }
-
-    std::once_flag start_once_;
-    std::mutex mu_;
-    std::vector<int64_t> samples_us_;
-};
-
-ExecuteLatencyStats &GetExecuteLatencyStats() {
-    static ExecuteLatencyStats stats;
-    return stats;
-}
-
-} // namespace
 
 status LightweightFeatureComputeExec::add_source(const std::string &name) {
     if (name.empty()) {
@@ -162,7 +90,6 @@ static status ensure_string_array(const std::shared_ptr<arrow::Array> &array,
 result<std::shared_ptr<arrow::RecordBatch>>
 LightweightFeatureComputeExec::execute(
     const std::shared_ptr<arrow::RecordBatch> &batch) const {
-    const auto start_time = std::chrono::steady_clock::now();
     if (!batch) {
         return absl::InvalidArgumentError("LightweightFeatureComputeExec input batch is null");
     }
@@ -344,31 +271,32 @@ LightweightFeatureComputeExec::execute(
 
     const uint64_t min_parallel_rules = get_env_u64(
         "METASPORE_LIGHTWEIGHT_MIN_PARALLEL_RULES", FLAGS_lightweight_min_parallel_rules);
-    size_t max_workers = static_cast<size_t>(
-        get_env_u64("METASPORE_FE_COMPUTE_THREAD_NUM", FLAGS_fe_compute_thread_num));
-    if (max_workers == 0) {
-        max_workers = std::max<size_t>(1, std::thread::hardware_concurrency());
+    size_t max_parallelism = static_cast<size_t>(get_env_u64(
+        "METASPORE_LIGHTWEIGHT_FEATURE_COMPUTE_PARALLELISM",
+        FLAGS_lightweight_feature_compute_parallelism));
+    if (max_parallelism == 0) {
+        max_parallelism = std::max<size_t>(1, std::thread::hardware_concurrency());
     }
-    size_t worker_count = 1;
-    if (specs_.size() >= min_parallel_rules && max_workers > 1) {
-        worker_count = std::min(max_workers, specs_.size());
+    size_t partition_count = 1;
+    if (specs_.size() >= min_parallel_rules && max_parallelism > 1) {
+        partition_count = std::min(max_parallelism, specs_.size());
     }
 
-    if (worker_count == 1) {
+    if (partition_count == 1) {
         for (size_t i = 0; i < specs_.size(); ++i) {
             CALL_AND_RETURN_IF_STATUS_NOT_OK(compute_one(i));
         }
     } else {
         auto &tp = Threadpools::get_fe_compute_threadpool();
-        size_t chunk = (specs_.size() + worker_count - 1) / worker_count;
-        std::vector<std::promise<status>> promises(worker_count);
+        size_t chunk = (specs_.size() + partition_count - 1) / partition_count;
+        std::vector<std::promise<status>> promises(partition_count);
         std::vector<std::future<status>> futures;
-        futures.reserve(worker_count);
+        futures.reserve(partition_count);
         for (auto &p : promises) {
             futures.push_back(p.get_future());
         }
 
-        for (size_t w = 0; w < worker_count; ++w) {
+        for (size_t w = 0; w < partition_count; ++w) {
             size_t begin = w * chunk;
             size_t end = std::min(specs_.size(), begin + chunk);
             if (begin >= end) {
@@ -414,10 +342,6 @@ LightweightFeatureComputeExec::execute(
                          validate_status.ToString());
         }
     }
-    const auto end_time = std::chrono::steady_clock::now();
-    const auto elapsed_us =
-        std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
-    GetExecuteLatencyStats().observe_us(static_cast<int64_t>(elapsed_us));
     return out_batch;
 }
 

@@ -19,6 +19,8 @@
 #include <sstream>
 #include <string>
 #include <stdexcept>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 #include <arrow/array.h>
@@ -30,6 +32,7 @@
 #include <common/features/feature_compute_exec.h>
 #include <common/features/lightweight_feature_compute_exec.h>
 #include <common/features/lightweight_schema_parser.h>
+#include <common/logger.h>
 #include <common/features/schema_parser.h>
 #include <common/test_utils.h>
 #include <common/threadpool.h>
@@ -38,6 +41,89 @@
 
 using namespace metaspore;
 using namespace metaspore::serving;
+
+namespace {
+
+class FeatureComputeExecuteLatencyStats {
+  public:
+    void observe_us(int64_t us) {
+        if (us < 0) {
+            return;
+        }
+        ensure_started();
+        std::lock_guard<std::mutex> lk(mu_);
+        samples_us_.push_back(us);
+    }
+
+  private:
+    void ensure_started() {
+        std::call_once(start_once_, [this]() {
+            samples_us_.reserve(4096);
+            std::thread([this]() { report_loop(); }).detach();
+        });
+    }
+
+    void report_loop() {
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::minutes(1));
+            std::vector<int64_t> snapshot;
+            {
+                std::lock_guard<std::mutex> lk(mu_);
+                snapshot.swap(samples_us_);
+            }
+
+            if (snapshot.empty()) {
+                spdlog::info("FeatureComputeBench::execute latency last_minute: count=0");
+                continue;
+            }
+
+            std::sort(snapshot.begin(), snapshot.end());
+            long double sum_us = 0;
+            for (int64_t v : snapshot) {
+                sum_us += static_cast<long double>(v);
+            }
+            const size_t n = snapshot.size();
+            const long double avg_us = sum_us / static_cast<long double>(n);
+            const size_t p99_index =
+                std::min(n - 1, static_cast<size_t>((n * 99 + 99) / 100 - 1));
+            const int64_t p99_us = snapshot[p99_index];
+            const int64_t max_us = snapshot.back();
+
+            spdlog::info(
+                "FeatureComputeBench::execute latency last_minute: count={}, avg_ms={:.3f}, p99_ms={:.3f}, max_ms={:.3f}",
+                n, static_cast<double>(avg_us) / 1000.0,
+                static_cast<double>(p99_us) / 1000.0,
+                static_cast<double>(max_us) / 1000.0);
+        }
+    }
+
+    std::once_flag start_once_;
+    std::mutex mu_;
+    std::vector<int64_t> samples_us_;
+};
+
+FeatureComputeExecuteLatencyStats &GetFeatureComputeExecuteLatencyStats() {
+    static FeatureComputeExecuteLatencyStats stats;
+    return stats;
+}
+
+class FeatureComputeExecuteLatencyScope {
+  public:
+    FeatureComputeExecuteLatencyScope()
+        : start_time_(std::chrono::steady_clock::now()) {}
+
+    ~FeatureComputeExecuteLatencyScope() {
+        const auto end_time = std::chrono::steady_clock::now();
+        const auto elapsed_us =
+            std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time_).count();
+        GetFeatureComputeExecuteLatencyStats().observe_us(static_cast<int64_t>(elapsed_us));
+    }
+
+  private:
+    std::chrono::steady_clock::time_point start_time_;
+};
+
+} // namespace
 
 static std::string make_schema_source(int rules, int columns) {
     std::ostringstream oss;
@@ -86,12 +172,14 @@ static double bench_lightweight(const std::string &schema_source,
     EXPECT_TRUE(status.ok()) << status.ToString();
 
     for (int i = 0; i < warmup; ++i) {
+        FeatureComputeExecuteLatencyScope latency_scope;
         auto r = compute.execute(batch);
         EXPECT_TRUE(r.ok()) << r.status().ToString();
     }
 
     auto start = std::chrono::steady_clock::now();
     for (int i = 0; i < iters; ++i) {
+        FeatureComputeExecuteLatencyScope latency_scope;
         auto r = compute.execute(batch);
         EXPECT_TRUE(r.ok()) << r.status().ToString();
     }
@@ -112,6 +200,7 @@ static double bench_arrow_exec(const std::string &schema_source,
     EXPECT_TRUE(status.ok()) << status.ToString();
 
     auto run_once = [&]() -> metaspore::status {
+        FeatureComputeExecuteLatencyScope latency_scope;
         auto fn = [&]() -> awaitable_result<std::shared_ptr<arrow::RecordBatch>> {
             ASSIGN_RESULT_OR_CO_RETURN_NOT_OK(auto ctx, exec.start_plan());
             CALL_AND_CO_RETURN_IF_STATUS_NOT_OK(exec.set_input_schema(ctx, "t", batch->schema()));
