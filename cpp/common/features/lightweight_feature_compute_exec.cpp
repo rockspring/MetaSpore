@@ -37,7 +37,7 @@
 
 namespace metaspore {
 
-DECLARE_uint64(lightweight_min_parallel_rules);
+DECLARE_uint64(lightweight_feature_compute_min_parallel_rules);
 DECLARE_uint64(lightweight_feature_compute_parallelism);
 DECLARE_uint64(background_thread_num);
 
@@ -270,7 +270,8 @@ LightweightFeatureComputeExec::execute(
     };
 
     const uint64_t min_parallel_rules = get_env_u64(
-        "METASPORE_LIGHTWEIGHT_MIN_PARALLEL_RULES", FLAGS_lightweight_min_parallel_rules);
+        "METASPORE_LIGHTWEIGHT_FEATURE_COMPUTE_MIN_PARALLEL_RULES",
+        FLAGS_lightweight_feature_compute_min_parallel_rules);
     size_t max_parallelism = static_cast<size_t>(get_env_u64(
         "METASPORE_LIGHTWEIGHT_FEATURE_COMPUTE_PARALLELISM",
         FLAGS_lightweight_feature_compute_parallelism));
