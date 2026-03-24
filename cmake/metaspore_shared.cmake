@@ -122,7 +122,7 @@ target_compile_definitions(metaspore_shared PRIVATE DBG_MACRO_NO_WARNING)
 
 target_compile_options(metaspore_shared PRIVATE
     -funroll-loops
-    -march=core-avx2
+    -march=${METASPORE_MARCH}
 )
 target_include_directories(metaspore_shared PRIVATE
     ${PROJECT_SOURCE_DIR}/cpp
