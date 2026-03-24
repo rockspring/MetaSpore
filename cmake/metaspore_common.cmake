@@ -58,7 +58,7 @@ add_library(metaspore-common STATIC
 
 target_compile_options(metaspore-common PRIVATE
     -funroll-loops
-    -march=core-avx2
+    -march=${METASPORE_MARCH}
 )
 
 target_compile_definitions(metaspore-common PUBLIC
