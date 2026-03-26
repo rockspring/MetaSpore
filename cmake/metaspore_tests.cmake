@@ -59,6 +59,7 @@ if(BUILD_SERVING_BIN)
     add_cpp_test(test_feature_compute_funcs common/feature_compute_funcs_test.cpp)
     add_cpp_test(test_feature_compute_exec common/feature_compute_exec_test.cpp)
     add_cpp_test(test_lightweight_feature_compute_bench common/lightweight_feature_compute_bench_test.cpp)
+    add_cpp_test(test_lightweight_feature_compute common/lightweight_feature_compute_test.cpp)
 
     add_cpp_test(test_ort_model serving/ort_model_test.cpp)
     add_cpp_test(test_sparse_lookup_model serving/sparse_lookup_model_test.cpp)
