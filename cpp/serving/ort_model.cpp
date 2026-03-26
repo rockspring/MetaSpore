@@ -19,7 +19,12 @@
 #include <serving/ort_model.h>
 #include <common/utils.h>
 
+#include <atomic>
+#include <cstdio>
+#include <cstring>
 #include <filesystem>
+#include <thread>
+#include <pthread.h>
 
 #include <boost/core/demangle.hpp>
 #include <fmt/format.h>
@@ -29,6 +34,35 @@ namespace metaspore::serving {
 
 DECLARE_uint64(ort_intraop_thread_num);
 DECLARE_uint64(ort_interop_thread_num);
+
+struct OrtThreadNamingCtx {
+    char prefix[12] = "ort";
+    std::atomic<int> idx{0};
+};
+
+static OrtCustomThreadHandle ort_custom_create_thread(void *ctx, void (*start)(void *), void *arg) {
+    auto *naming = static_cast<OrtThreadNamingCtx *>(ctx);
+    int i = naming->idx.fetch_add(1);
+    char prefix_copy[12];
+    std::memcpy(prefix_copy, naming->prefix, sizeof(prefix_copy));
+    auto *t = new std::thread([start, arg, i, prefix_copy] {
+        char name[16];
+        std::snprintf(name, sizeof(name), "%.11s_%d", prefix_copy, i);
+#ifdef __linux__
+        pthread_setname_np(pthread_self(), name);
+#endif
+        start(arg);
+    });
+    return reinterpret_cast<OrtCustomThreadHandle>(t);
+}
+
+static void ort_custom_join_thread(OrtCustomThreadHandle handle) {
+    auto *t = reinterpret_cast<std::thread *>(
+        const_cast<OrtCustomHandleType *>(handle));
+    if (t->joinable())
+        t->join();
+    delete t;
+}
 
 class OrtModelGlobal {
   public:
@@ -48,9 +82,18 @@ class OrtModelContext {
         session_options_.SetExecutionMode(ExecutionMode::ORT_PARALLEL);
         session_options_.SetInterOpNumThreads(FLAGS_ort_interop_thread_num);
         session_options_.SetIntraOpNumThreads(FLAGS_ort_intraop_thread_num);
+        session_options_.SetCustomThreadCreationOptions(&naming_ctx_);
+        session_options_.SetCustomCreateThreadFn(ort_custom_create_thread);
+        session_options_.SetCustomJoinThreadFn(ort_custom_join_thread);
         session_options_.DisableCpuMemArena();
         session_options_.DisableMemPattern();
     }
+
+    void set_thread_prefix(const std::string &model_name) {
+        std::snprintf(naming_ctx_.prefix, sizeof(naming_ctx_.prefix), "ort_%.7s", model_name.c_str());
+    }
+
+    OrtThreadNamingCtx naming_ctx_;
     Ort::RunOptions run_options_;
     Ort::SessionOptions session_options_;
     Ort::Session session_;
@@ -100,6 +143,7 @@ awaitable_status OrtModel::load(std::string dir_path) {
                 OrtSessionOptionsAppendExecutionProvider_CUDA(context_->session_options_, 0);
 #pragma GCC diagnostic pop
             }
+            context_->set_thread_prefix(dir.filename().string());
             context_->session_ =
                 Ort::Session(get_ort_model_global().env_, file.c_str(), context_->session_options_);
             const size_t input_count = context_->session_.GetInputCount();
