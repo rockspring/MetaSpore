@@ -39,6 +39,11 @@ const prometheus::Histogram::BucketBoundaries kDurationBuckets = {
     0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000
 };
 
+// Histogram bucket boundaries for request batch size.
+const prometheus::Histogram::BucketBoundaries kBatchSizeBuckets = {
+    1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048
+};
+
 } // namespace
 
 Metrics &Metrics::get_instance() {
@@ -58,6 +63,11 @@ Metrics::Metrics() {
         .Name("metaspore_predict_duration_ms")
         .Help("Predict latency in milliseconds, labeled by model and stage "
               "(total/convert_input/model_compute/convert_output)")
+        .Register(*registry_);
+
+    batch_size_family_ = &prometheus::BuildHistogram()
+        .Name("metaspore_predict_batch_size")
+        .Help("Predict request batch size, labeled by model")
         .Register(*registry_);
 
     if (FLAGS_metrics_port == 0) {
@@ -87,6 +97,12 @@ void Metrics::record_duration(const std::string &model, const std::string &stage
     if (!duration_family_) return;
     duration_family_->Add({{"model", model}, {"stage", stage}}, kDurationBuckets)
         .Observe(duration_ms);
+}
+
+void Metrics::record_batch_size(const std::string &model, int64_t batch_size) {
+    if (!batch_size_family_ || batch_size <= 0) return;
+    batch_size_family_->Add({{"model", model}}, kBatchSizeBuckets)
+        .Observe(static_cast<double>(batch_size));
 }
 
 } // namespace metaspore::serving

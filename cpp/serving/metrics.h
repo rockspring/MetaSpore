@@ -20,6 +20,7 @@
 #include <prometheus/histogram.h>
 #include <prometheus/registry.h>
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -34,6 +35,7 @@ namespace metaspore::serving {
 // Metrics exposed:
 //   metaspore_predict_requests_total{model, status}  -- Counter  (QPS via rate())
 //   metaspore_predict_duration_ms{model, stage}      -- Histogram
+//   metaspore_predict_batch_size{model}              -- Histogram
 //
 // Stages (grpc_model_runner / grpc_server):
 //   total          end-to-end latency (grpc_server.cpp)
@@ -59,6 +61,9 @@ class Metrics {
     // Observe a stage duration (milliseconds, double precision).
     void record_duration(const std::string &model, const std::string &stage, double duration_ms);
 
+    // Observe request batch size for model input.
+    void record_batch_size(const std::string &model, int64_t batch_size);
+
   private:
     Metrics();
     ~Metrics();
@@ -67,6 +72,7 @@ class Metrics {
     std::shared_ptr<prometheus::Registry>      registry_;
     prometheus::Family<prometheus::Counter>   *requests_family_{nullptr};
     prometheus::Family<prometheus::Histogram> *duration_family_{nullptr};
+    prometheus::Family<prometheus::Histogram> *batch_size_family_{nullptr};
 };
 
 } // namespace metaspore::serving
