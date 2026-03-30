@@ -130,14 +130,11 @@ static InlineHashList make_hash_list_list_string(const arrow::ListArray &arr, in
     h.list_vals.reserve(end - begin);
     for (int32_t j = begin; j < end; ++j) {
         if (values.IsNull(j)) {
-            // null element: Arrow stores raw_value=0, hash as if value=0
-            h.list_vals.push_back(BKDRHashOneField(seed, 0));
             continue;
         }
         auto view = values.GetView(j);
         if (view.empty()) {
-            // empty string: Arrow appends null (raw_value=0) to output list
-            h.list_vals.push_back(BKDRHashOneField(seed, 0));
+            h.list_vals.push_back(0);
             continue;
         }
         h.list_vals.push_back(BKDRHashOneField(seed, BKDRHash(view.data(), view.length(), 0)));
@@ -240,6 +237,54 @@ LightweightFeatureComputeExec::execute(
             if (!array_result.ok()) return to_absl(array_result.status());
             output_columns[spec_idx] = *array_result;
             fields[spec_idx] = arrow::field("f" + std::to_string(spec_idx), arrow::uint64());
+            return absl::OkStatus();
+        }
+
+        if (any_list && spec.columns.size() == 1) {
+            // Fast path: single list<string> column → list<uint64>
+            // Must match Arrow exec behavior: empty strings become null elements.
+            const auto &arr =
+                static_cast<const arrow::ListArray &>(*column_cache[(size_t)indices[0]]);
+            const auto &values =
+                static_cast<const arrow::StringArray &>(*arr.values());
+            const uint64_t seed = spec.seeds[0];
+            auto value_builder = std::make_shared<arrow::UInt64Builder>();
+            arrow::ListBuilder builder(arrow::default_memory_pool(), value_builder,
+                                       std::make_shared<arrow::ListType>(arrow::uint64()));
+            auto s = builder.Reserve(rows);
+            if (!s.ok()) return to_absl(s);
+            for (int64_t i = 0; i < rows; ++i) {
+                if (arr.IsNull(i)) {
+                    s = builder.AppendNull();
+                    if (!s.ok()) return to_absl(s);
+                    continue;
+                }
+                int32_t begin = arr.value_offset(i);
+                int32_t end   = arr.value_offset(i + 1);
+                if (begin == end) {
+                    s = builder.AppendNull();
+                    if (!s.ok()) return to_absl(s);
+                    continue;
+                }
+                s = builder.Append();
+                if (!s.ok()) return to_absl(s);
+                for (int32_t j = begin; j < end; ++j) {
+                    if (values.IsNull(j)) continue;
+                    auto view = values.GetView(j);
+                    if (view.empty()) {
+                        s = value_builder->AppendNull();
+                    } else {
+                        s = value_builder->Append(
+                            BKDRHashOneField(seed, BKDRHash(view.data(), view.length(), 0)));
+                    }
+                    if (!s.ok()) return to_absl(s);
+                }
+            }
+            auto array_result = builder.Finish();
+            if (!array_result.ok()) return to_absl(array_result.status());
+            output_columns[spec_idx] = *array_result;
+            fields[spec_idx] = arrow::field("f" + std::to_string(spec_idx),
+                                            std::make_shared<arrow::ListType>(arrow::uint64()));
             return absl::OkStatus();
         }
 
