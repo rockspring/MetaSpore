@@ -21,6 +21,7 @@
 #include <serving/converters.h>
 #include <serving/dense_feature_extraction_model.h>
 #include <serving/grpc_input_output.h>
+#include <serving/metrics.h>
 #include <serving/py_preprocessing_model.h>
 #include <serving/ort_model.h>
 #include <serving/sparse_feature_extraction_model.h>
@@ -63,24 +64,35 @@ template <> Ort::Value Converter::arrow_to_ort_tensor<void>(const arrow::Tensor 
 
 status GrpcRequestToFEConverter::convert(std::unique_ptr<GrpcRequestOutput> from,
                                          FeatureExtractionModelInput *to) {
+    int64_t batch_size = 0;
     for (const auto &name : names_) {
         ASSIGN_RESULT_OR_RETURN_NOT_OK(
             auto r, ArrowRecordBatchSerde::deserialize_from(name, from->request));
+        if (batch_size == 0) {
+            batch_size = r->num_rows();
+        }
         to->feature_tables.emplace(name, r);
     }
+    Metrics::get_instance().record_batch_size(from->request.model_name(), batch_size);
     return absl::OkStatus();
 }
 
 status GrpcRequestToOrtConverter::convert(std::unique_ptr<GrpcRequestOutput> from,
                                           OrtModelInput *to) {
+    const std::string model_name = from->request.model_name();
+    int64_t batch_size = 0;
     for (const auto &name : names_) {
         ASSIGN_RESULT_OR_RETURN_NOT_OK(auto r,
                                        ArrowTensorSerde::deserialize_from(name, from->request));
+        if (batch_size == 0 && !r->shape().empty()) {
+            batch_size = r->shape()[0];
+        }
         to->inputs.emplace(name, OrtModelInput::Value{.value = arrow_to_ort_tensor<void>(*r)});
     }
     // move from to the first element to hold all memories
     if (!to->inputs.empty())
         to->inputs.begin()->second.holder = std::move(from);
+    Metrics::get_instance().record_batch_size(model_name, batch_size);
     return absl::OkStatus();
 }
 
@@ -189,12 +201,19 @@ status OrtToGrpcReplyConverter::convert(std::unique_ptr<OrtModelOutput> from, Gr
 }
 
 status GrpcRequestToPyPreprocessingConverter::convert(std::unique_ptr<GrpcRequestOutput> from, PyPreprocessingModelInput *to) {
+    int64_t batch_size = 0;
     for (const auto &name : names_) {
         auto find = from->request.payload().find(name);
         if (find == from->request.payload().end())
             return absl::NotFoundError(
                 fmt::format("Cannot find {} from rpc request", name));
+        ASSIGN_RESULT_OR_RETURN_NOT_OK(
+            auto r, ArrowTensorSerde::deserialize_from(name, from->request));
+        if (batch_size == 0 && !r->shape().empty()) {
+            batch_size = r->shape()[0];
+        }
     }
+    Metrics::get_instance().record_batch_size(from->request.model_name(), batch_size);
     *to->request.mutable_payload() = std::move(*from->request.mutable_payload());
     return absl::OkStatus();
 }

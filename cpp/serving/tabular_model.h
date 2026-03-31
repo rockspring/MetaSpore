@@ -50,6 +50,7 @@ class TabularModel : public ModelBaseCRTP<TabularModel> {
 
     const std::vector<std::string> &input_names() const override;
     const std::vector<std::string> &output_names() const override;
+    const std::string &version() const;
 
   private:
     std::unique_ptr<TabularModelContext> context_;

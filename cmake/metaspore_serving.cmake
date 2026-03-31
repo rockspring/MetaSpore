@@ -16,6 +16,7 @@
 
 find_package(range-v3 CONFIG REQUIRED)
 find_package(mimalloc CONFIG REQUIRED)
+find_package(prometheus-cpp CONFIG REQUIRED)
 
 include("${CMAKE_CURRENT_LIST_DIR}/FindOnnxRuntimeCpuDefault.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/AsioGrpcProtobufGenerator.cmake")
@@ -25,6 +26,7 @@ if(ENABLE_GPU)
 endif()
 
 set(SRCS
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp/serving/metrics.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp/serving/globals.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp/serving/ort_model.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp/serving/inmem_sparse_lookup.cpp
@@ -65,6 +67,8 @@ target_link_libraries(metaspore-serving PUBLIC
     fmt::fmt
     range-v3
 )
+
+target_link_libraries(metaspore-serving PUBLIC prometheus-cpp::pull)
 
 if(ENABLE_GPU)
     target_include_directories(metaspore-serving PUBLIC ${CUDA_INCLUDE_DIRS})

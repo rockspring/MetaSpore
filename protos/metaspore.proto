@@ -49,6 +49,16 @@ message LoadReply {
   string msg = 1;
 }
 
+message UnloadRequest {
+  string model_name = 1;
+  string version = 3;
+}
+
+message UnloadReply {
+  string msg = 1;
+}
+
 service Load {
   rpc Load(LoadRequest) returns (LoadReply) {}
+  rpc Unload(UnloadRequest) returns (UnloadReply) {}
 }

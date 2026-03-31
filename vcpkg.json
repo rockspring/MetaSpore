@@ -44,7 +44,13 @@
         },
         "concurrentqueue",
         "zeromq",
-        "zlib"
+        "zlib",
+        {
+            "name": "prometheus-cpp",
+            "features": [
+                "pull"
+            ]
+        }
     ],
     "overrides": [
         {
