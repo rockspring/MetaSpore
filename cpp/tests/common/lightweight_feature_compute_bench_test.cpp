@@ -16,6 +16,9 @@
 
 #include <chrono>
 #include <algorithm>
+#include <fstream>
+#include <map>
+#include <set>
 #include <sstream>
 #include <string>
 #include <stdexcept>
@@ -125,38 +128,117 @@ class FeatureComputeExecuteLatencyScope {
 
 } // namespace
 
-static std::string make_schema_source(int rules, int columns) {
+static std::string read_text_file(const std::string &path) {
+    std::ifstream ifs(path);
+    if (!ifs.is_open()) {
+        throw std::runtime_error("failed to open file: " + path);
+    }
     std::ostringstream oss;
-    int single = std::min(rules, columns - 1);
-    for (int i = 0; i < single; ++i) {
-        oss << "c" << i << "\n";
-    }
-    for (int i = single; i < rules; ++i) {
-        int a = i % columns;
-        int b = (i + 1) % columns;
-        oss << "c" << a << "#c" << b << "\n";
-    }
+    oss << ifs.rdbuf();
     return oss.str();
 }
 
-static std::shared_ptr<arrow::RecordBatch> make_batch(int64_t rows, int64_t columns) {
+static std::set<std::string> collect_required_columns(const std::string &schema_source) {
+    std::set<std::string> cols;
+    std::istringstream is(schema_source);
+    std::string line;
+    while (std::getline(is, line)) {
+        if (line.empty()) continue;
+        std::istringstream ls(line);
+        std::string token;
+        while (std::getline(ls, token, '#')) {
+            if (!token.empty()) cols.insert(token);
+        }
+    }
+    return cols;
+}
+
+static std::string trim(const std::string &s) {
+    size_t b = 0;
+    while (b < s.size() && std::isspace(static_cast<unsigned char>(s[b]))) ++b;
+    size_t e = s.size();
+    while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) --e;
+    return s.substr(b, e - b);
+}
+
+static std::string unquote_json_string(const std::string &raw) {
+    if (raw.size() >= 2 && raw.front() == '"' && raw.back() == '"') {
+        std::string out;
+        out.reserve(raw.size() - 2);
+        for (size_t i = 1; i + 1 < raw.size(); ++i) {
+            char c = raw[i];
+            if (c == '\\' && i + 1 < raw.size() - 1) {
+                char n = raw[++i];
+                switch (n) {
+                    case '"': out.push_back('"'); break;
+                    case '\\': out.push_back('\\'); break;
+                    case '/': out.push_back('/'); break;
+                    case 'b': out.push_back('\b'); break;
+                    case 'f': out.push_back('\f'); break;
+                    case 'n': out.push_back('\n'); break;
+                    case 'r': out.push_back('\r'); break;
+                    case 't': out.push_back('\t'); break;
+                    default:
+                        // Keep unknown escape as-is.
+                        out.push_back(n);
+                        break;
+                }
+            } else {
+                out.push_back(c);
+            }
+        }
+        return out;
+    }
+    return raw;
+}
+
+// Parse flat top-level JSON object into string values.
+// For non-string primitives, keep their literal text form.
+static std::map<std::string, std::string> parse_flat_json_object(const std::string &json_text) {
+    std::map<std::string, std::string> kv;
+    std::istringstream is(json_text);
+    std::string line;
+    while (std::getline(is, line)) {
+        line = trim(line);
+        if (line.empty() || line == "{" || line == "}") continue;
+        if (!line.empty() && line.back() == ',') line.pop_back();
+        size_t colon = line.find(':');
+        if (colon == std::string::npos) continue;
+        std::string key = trim(line.substr(0, colon));
+        std::string val = trim(line.substr(colon + 1));
+        key = unquote_json_string(key);
+        val = unquote_json_string(val);
+        if (!key.empty()) kv.emplace(std::move(key), std::move(val));
+    }
+    return kv;
+}
+
+static std::shared_ptr<arrow::RecordBatch> make_batch(int64_t rows,
+                                                      const std::string &schema_source,
+                                                      const std::string &sample_json_path) {
+    const std::string json_text = read_text_file(sample_json_path);
+    const auto kv = parse_flat_json_object(json_text);
+
+    const auto required_cols = collect_required_columns(schema_source);
     std::vector<std::shared_ptr<arrow::Array>> arrays;
-    arrays.reserve(columns);
+    arrays.reserve(required_cols.size());
     arrow::FieldVector fields;
-    fields.reserve(columns);
-    for (int64_t c = 0; c < columns; ++c) {
+    fields.reserve(required_cols.size());
+    for (const auto &col : required_cols) {
+        std::string val;
+        auto it = kv.find(col);
+        if (it != kv.end()) val = it->second;
         arrow::StringBuilder builder;
         builder.Reserve(rows);
         for (int64_t r = 0; r < rows; ++r) {
-            std::string v = "vvvvvv" + std::to_string(c) + "_" + std::to_string(r);
-            builder.Append(v);
+            builder.Append(val);
         }
         auto array_result = builder.Finish();
         if (!array_result.ok()) {
             throw std::runtime_error(array_result.status().ToString());
         }
         arrays.push_back(*array_result);
-        fields.push_back(arrow::field("c" + std::to_string(c), arrow::utf8()));
+        fields.push_back(arrow::field(col, arrow::utf8()));
     }
     auto schema = std::make_shared<arrow::Schema>(std::move(fields));
     return arrow::RecordBatch::Make(schema, rows, std::move(arrays));
@@ -232,20 +314,23 @@ static double bench_arrow_exec(const std::string &schema_source,
 }
 
 TEST(LightweightFeatureComputeBenchTest, CompareWithArrowExec) {
-    const int rules = 341;
-    const int columns = 340;
+    const std::string schema_path =
+        "cpp/tests/common/testdata/lightweight_feature_compute_bench_schema.txt";
+    const std::string sample_json_path =
+        "cpp/tests/common/testdata/lightweight_feature_compute_bench_sample.json";
+    const std::string schema_source = read_text_file(schema_path);
+    const int rules = static_cast<int>(std::count(schema_source.begin(), schema_source.end(), '\n'));
     const int warmup = 2;
     const int iters = 5;
-    auto schema_source = make_schema_source(rules, columns);
-    fmt::print("schema_source is\n{}\n", schema_source);
+    fmt::print("schema_source_file={} rules={}\n", schema_path, rules);
 
     std::vector<int64_t> batch_sizes = {32, 64, 128, 1024, 4096};
     for (auto rows : batch_sizes) {
-        auto batch = make_batch(rows, columns);
+        auto batch = make_batch(rows, schema_source, sample_json_path);
         double lw_ms = bench_lightweight(schema_source, batch, warmup, iters);
         double arrow_ms = bench_arrow_exec(schema_source, batch, warmup, iters);
         fmt::print("rows {} cols {} rules {} | lightweight {:.3f} ms | arrow_exec {:.3f} ms\n",
-                   rows, columns, rules, lw_ms, arrow_ms);
+                   rows, batch->num_columns(), rules, lw_ms, arrow_ms);
     }
 }
 
