@@ -56,7 +56,7 @@ target_include_directories(metaspore-serving PUBLIC
 
 target_compile_options(metaspore-serving PUBLIC
     -funroll-loops
-    -march=core-avx2
+    -march=${METASPORE_MARCH}
 )
 
 target_link_libraries(metaspore-serving PUBLIC
