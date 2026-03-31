@@ -14,6 +14,8 @@
 // limitations under the License.
 //
 
+#include <cstdio>
+#include <pthread.h>
 #include <gflags/gflags.h>
 #include <serving/grpc_client_context_pool.h>
 
@@ -32,6 +34,13 @@ GrpcClientContextPool::GrpcClientContextPool()
     }
     for (size_t i = 0; i < grpc_client_thread_count_; i++) {
         grpc_client_threads_.emplace_back([&, i] {
+            char name[16];
+            std::snprintf(name, sizeof(name), "ms_grpc_cli_%zu", i);
+#ifdef __linux__
+            pthread_setname_np(pthread_self(), name);
+#elif defined(__APPLE__)
+            pthread_setname_np(name);
+#endif
             auto &grpc_context = *std::next(grpc_client_contexts_.begin(), i);
             grpc_context.run();
         });
