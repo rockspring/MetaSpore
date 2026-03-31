@@ -13,6 +13,8 @@ ENV PKG_CONFIG_PATH /opt/rh/devtoolset-11/root/usr/lib64/pkgconfig:${PKG_CONFIG_
 RUN git clone https://github.com/Microsoft/vcpkg.git /opt/vcpkg
 RUN /opt/vcpkg/bootstrap-vcpkg.sh
 COPY vcpkg-wheel.json /opt/vcpkg.json
+COPY vcpkg-configuration.json /opt/vcpkg-configuration.json
+COPY vcpkg-ports /opt/vcpkg-ports
 RUN if [ "${ENABLE_AVX512}" = "ON" ]; then \
       echo "set(VCPKG_C_FLAGS \"-D_GLIBCXX_USE_CXX11_ABI=0 -march=skylake-avx512\")" >> /opt/vcpkg/triplets/x64-linux.cmake; \
       echo "set(VCPKG_CXX_FLAGS \"-D_GLIBCXX_USE_CXX11_ABI=0 -march=skylake-avx512\")" >> /opt/vcpkg/triplets/x64-linux.cmake; \
@@ -25,4 +27,4 @@ RUN if [ "${ENABLE_ORT_DEBUG_SYMBOLS}" = "ON" ]; then \
       echo "set(VCPKG_CXX_FLAGS_RELEASE \"\${VCPKG_CXX_FLAGS_RELEASE} -g -fno-omit-frame-pointer\")" >> /opt/vcpkg/triplets/x64-linux.cmake; \
     fi
 RUN echo "set(VCPKG_BUILD_TYPE release)" >> /opt/vcpkg/triplets/x64-linux.cmake
-RUN PATH=/opt/python/cp38-cp38/bin:$PATH && LD_LIBRARY_PATH=/opt/python/cp38-cp38/lib:$LD_LIBRARY_PATH && /opt/vcpkg/vcpkg install --x-install-root=/opt/vcpkg_installed --x-manifest-root=/opt --clean-after-build
+RUN PATH=/opt/python/cp38-cp38/bin:$PATH && LD_LIBRARY_PATH=/opt/python/cp38-cp38/lib:$LD_LIBRARY_PATH && /opt/vcpkg/vcpkg install --x-install-root=/opt/vcpkg_installed --x-manifest-root=/opt --clean-after-build --binarysource=clear

@@ -1,0 +1,5 @@
+{
+    "name": "onnxruntime-gpu-default",
+    "version-string": "1.10.0",
+    "description": "Build onnxruntime 1.10.0 from source with shared library output for Linux GPU runtime."
+}

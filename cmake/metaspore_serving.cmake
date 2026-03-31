@@ -94,15 +94,25 @@ add_custom_command(TARGET metaspore-serving-bin
 
 if(ENABLE_GPU)
     get_filename_component(ORT_GPU_LIB_DIR ${ORT_GPU_LIBRARY} DIRECTORY)
-    add_custom_command(TARGET metaspore-serving-bin
-        POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy
-            libonnxruntime_providers_cuda.so
-            libonnxruntime_providers_shared.so
-            libonnxruntime_providers_tensorrt.so
-            ${CMAKE_CURRENT_BINARY_DIR}
-        WORKING_DIRECTORY ${ORT_GPU_LIB_DIR}
+    set(ORT_PROVIDER_LIBS)
+    foreach(ORT_PROVIDER_LIB
+        libonnxruntime_providers_cuda.so
+        libonnxruntime_providers_shared.so
+        libonnxruntime_providers_tensorrt.so
     )
+        if(EXISTS "${ORT_GPU_LIB_DIR}/${ORT_PROVIDER_LIB}")
+            list(APPEND ORT_PROVIDER_LIBS ${ORT_PROVIDER_LIB})
+        endif()
+    endforeach()
+    if(ORT_PROVIDER_LIBS)
+        add_custom_command(TARGET metaspore-serving-bin
+            POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy
+                ${ORT_PROVIDER_LIBS}
+                ${CMAKE_CURRENT_BINARY_DIR}
+            WORKING_DIRECTORY ${ORT_GPU_LIB_DIR}
+        )
+    endif()
 endif()
 
 find_package(Python REQUIRED COMPONENTS Interpreter Development)
