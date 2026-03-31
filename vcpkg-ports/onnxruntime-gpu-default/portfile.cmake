@@ -26,6 +26,23 @@ set(ORT_BUILD_ARGS
     --build_shared_lib
 )
 
+set(ORT_CONFIG "Release")
+if(DEFINED ENV{ENABLE_ORT_DEBUG_SYMBOLS} AND "$ENV{ENABLE_ORT_DEBUG_SYMBOLS}" STREQUAL "ON")
+    set(ORT_CONFIG "RelWithDebInfo")
+    set(ORT_BUILD_ARGS
+        --config ${ORT_CONFIG}
+        --update
+        --build
+        --skip_tests
+        --parallel
+        --build_shared_lib
+        --cmake_extra_defines
+            CMAKE_BUILD_TYPE=${ORT_CONFIG}
+            CMAKE_C_FLAGS_RELWITHDEBINFO=-g\ -fno-omit-frame-pointer
+            CMAKE_CXX_FLAGS_RELWITHDEBINFO=-g\ -fno-omit-frame-pointer
+    )
+endif()
+
 if(EXISTS "/usr/local/cuda")
     list(APPEND ORT_BUILD_ARGS --use_cuda --cuda_home /usr/local/cuda)
     if(EXISTS "/usr/include/cudnn.h" OR EXISTS "/usr/include/cudnn_version.h")
@@ -43,7 +60,7 @@ vcpkg_execute_required_process(
     LOGNAME "build-${TARGET_TRIPLET}-rel"
 )
 
-set(ORT_LIB_DIR "${ORT_SOURCE_DIR}/build/Linux/Release")
+set(ORT_LIB_DIR "${ORT_SOURCE_DIR}/build/Linux/${ORT_CONFIG}")
 if(NOT EXISTS "${ORT_LIB_DIR}")
     message(FATAL_ERROR "onnxruntime build output not found at ${ORT_LIB_DIR}")
 endif()
