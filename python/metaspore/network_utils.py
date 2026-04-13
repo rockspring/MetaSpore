@@ -17,14 +17,16 @@
 def get_host_ip():
     import socket
     host_name = socket.gethostname()
-    host_ip = socket.gethostbyname(host_name)
+    try:
+        host_ip = socket.gethostbyname(host_name)
+    except socket.gaierror:
+        host_ip = '127.0.0.1'
     return host_ip
 
 def get_available_endpoint():
     import socket
-    import random
+    host_ip = get_host_ip()
     host_name = socket.gethostname()
-    host_ip = socket.gethostbyname(host_name)
     addr_info = socket.getaddrinfo(host_ip, None)
     ip_family = addr_info[0][0]
     with socket.socket(ip_family, socket.SOCK_STREAM) as sock:

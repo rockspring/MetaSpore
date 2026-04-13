@@ -19,8 +19,8 @@
 #include <istream>
 #include <memory>
 
-#include <arrow/compute/exec/exec_plan.h>
-#include <arrow/compute/exec/options.h>
+#include <arrow/acero/exec_plan.h>
+#include <arrow/acero/options.h>
 #include <arrow/record_batch.h>
 
 #include <common/types.h>
@@ -39,7 +39,7 @@ class FeatureComputeExec {
     status add_source(const std::string &name);
 
     status add_join_plan(const std::string &left_source_name, const std::string &right_source_name,
-                         arrow::compute::JoinType join_type,
+                         arrow::acero::JoinType join_type,
                          const std::vector<std::string> &left_key_names,
                          const std::vector<std::string> &right_key_names);
 
@@ -63,7 +63,7 @@ class FeatureComputeExec {
     std::vector<std::string> get_input_names() const;
 
   protected:
-    void finish_join(arrow::compute::ExecNode *node) const;
+    void finish_join(arrow::acero::ExecNode *node) const;
 
   private:
     std::unique_ptr<FeatureComputeContext> context_;

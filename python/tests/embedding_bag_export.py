@@ -54,7 +54,7 @@ class EmbeddingBagModule(torch.nn.Module):
                             "offsets": {0: "offset_num"}
                         },
                         verbose=True,
-                        opset_version=14)
+                        opset_version=18)
 
 model = EmbeddingBagModule(5, 16)
 model.export_onnx("embedding_bag.onnx")

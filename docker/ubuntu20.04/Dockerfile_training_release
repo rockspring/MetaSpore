@@ -45,7 +45,7 @@ ENV JAVA_HOME=/usr
 
 RUN update-alternatives --install /usr/bin/python python /usr/bin/python3 30
 RUN python -m pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple/
-RUN python -m pip config set globa.extra-index-url "https://pypi.tuna.tsinghua.edu.cn/simple/ https://pypi.org/simple/"
+RUN python -m pip config set global.extra-index-url "https://pypi.tuna.tsinghua.edu.cn/simple/ https://pypi.org/simple/"
 
 RUN apt-get install -y pkg-config uuid-dev libpulse-dev && \
     apt-get install -y tini libpam-modules krb5-user libnss3 procps && apt-get clean && \
@@ -54,7 +54,7 @@ RUN apt-get install -y pkg-config uuid-dev libpulse-dev && \
 RUN python -m pip install --upgrade pip setuptools wheel && \
     python -m pip install numpy && \
     python -m pip install torch --index-url https://download.pytorch.org/whl/cpu && \
-    python -m pip install onnx onnxmltools onnxruntime tabulate && \
+    python -m pip install onnx==1.20.1 onnxmltools onnxruntime tabulate && \
     python -m pip cache purge && \
     echo OK: python
 

@@ -14,7 +14,8 @@
 // limitations under the License.
 //
 
-#include <arrow/ipc/json_simple.h>
+#include <arrow/api.h>
+#include <arrow/builder.h>
 #include <range/v3/all.hpp>
 
 #include <serving/feature_extraction_model_input.h>
@@ -43,25 +44,6 @@ using namespace arrow;
         co_return;                                                                                 \
     }
 
-std::shared_ptr<Array> ArrayFromJSON(const std::shared_ptr<DataType> &type,
-                                     util::string_view json) {
-    std::shared_ptr<Array> out;
-    auto result = ipc::internal::json::ArrayFromJSON(type, json, &out);
-    if (!result.ok())
-        ::abort();
-    return out;
-}
-
-std::shared_ptr<RecordBatch> RecordBatchFromJSON(const std::shared_ptr<Schema> &schema,
-                                                 util::string_view json) {
-    // Parse as a StructArray
-    auto struct_type = struct_(schema->fields());
-    std::shared_ptr<Array> struct_array = ArrayFromJSON(struct_type, json);
-
-    // Convert StructArray to RecordBatch
-    return *RecordBatch::FromStructArray(struct_array);
-}
-
 TEST(TabularXGBoostModelTestSuite, TabularXGBoostModelTest) {
     boost::asio::co_spawn(
         Threadpools::get_background_threadpool(),
@@ -71,14 +53,24 @@ TEST(TabularXGBoostModelTestSuite, TabularXGBoostModelTest) {
             ASSERT_STATUS_OK_COROUTINE(status);
 
             // construct input record batch
-            auto schemas = views::iota(0, 10) | views::transform([](int x) {
-                               return arrow::field(fmt::format("field_{}", x), arrow::float32());
-                           }) |
-                           to<std::vector>();
-            auto rb = RecordBatchFromJSON(arrow::schema(std::move(schemas)),
-                                          R"([
-                    [0.6558618,0.13005558,0.03510657,0.23048967,0.63329154,0.43201634,0.5795548,0.5384891,0.9612295,0.39274803]
-                ])");
+            auto schema_fields =
+                views::iota(0, 10) | views::transform([](int x) {
+                    return arrow::field(fmt::format("field_{}", x), arrow::float32());
+                }) |
+                to<std::vector>();
+            auto schema_obj = arrow::schema(std::move(schema_fields));
+            std::vector<float> values = {0.6558618f,  0.13005558f, 0.03510657f, 0.23048967f,
+                                         0.63329154f, 0.43201634f, 0.5795548f,  0.5384891f,
+                                         0.9612295f,  0.39274803f};
+            arrow::ArrayVector arrays;
+            for (int i = 0; i < 10; i++) {
+                arrow::FloatBuilder builder;
+                ASSERT_STATUS_OK_COROUTINE(builder.Append(values[i]));
+                auto result = builder.Finish();
+                ASSERT_STATUS_OK_COROUTINE(result.status());
+                arrays.push_back(std::move(result).ValueUnsafe());
+            }
+            auto rb = arrow::RecordBatch::Make(schema_obj, 1, std::move(arrays));
             fmt::print("Input: {}\n", rb->ToString());
             auto fe_input = std::make_unique<FeatureExtractionModelInput>();
             fe_input->feature_tables["input"] = rb;

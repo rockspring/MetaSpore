@@ -19,6 +19,11 @@ find_package(pybind11 REQUIRED CONFIG)
 find_package(AWSSDK REQUIRED CONFIG COMPONENTS s3)
 find_package(ZLIB REQUIRED)
 
+find_path(DBG_MACRO_INCLUDE_DIRS NAMES dbg-macro/dbg.h
+    HINTS ${CMAKE_PREFIX_PATH}
+    PATH_SUFFIXES include
+    REQUIRED)
+
 find_package(json11 CONFIG)
 
 find_package(Thrift CONFIG)
@@ -120,13 +125,14 @@ target_compile_definitions(metaspore_shared PRIVATE DMLC_USE_S3=1)
 target_compile_definitions(metaspore_shared PRIVATE _METASPORE_VERSION="${project_version}")
 target_compile_definitions(metaspore_shared PRIVATE DBG_MACRO_NO_WARNING)
 
-target_compile_options(metaspore_shared PRIVATE
-    -funroll-loops
-    -march=core-avx2
-)
+target_compile_options(metaspore_shared PRIVATE -funroll-loops)
+if(METASPORE_CPU_MARCH_FLAG)
+    target_compile_options(metaspore_shared PRIVATE ${METASPORE_CPU_MARCH_FLAG})
+endif()
 target_include_directories(metaspore_shared PRIVATE
     ${PROJECT_SOURCE_DIR}/cpp
     ${PROJECT_BINARY_DIR}/gen/thrift/cpp
+    ${DBG_MACRO_INCLUDE_DIRS}
 )
 target_link_libraries(metaspore_shared PRIVATE
     metaspore-common

@@ -18,11 +18,26 @@
 
 #include <common/hashmap/memory_mapped_array_hash_map.h>
 #include <common/hashmap/perfect_array_hash_map.h>
-#include <emmintrin.h>
 #include <memory>
 #include <vector>
 
+#if defined(__x86_64__) || defined(_M_AMD64) || defined(_M_X64) || defined(__i386__) ||           \
+    defined(_M_IX86)
+#include <emmintrin.h>
+#endif
+
 namespace metaspore {
+
+inline void multi_map_search_cpu_pause() {
+#if defined(__x86_64__) || defined(_M_AMD64) || defined(_M_X64) || defined(__i386__) ||           \
+    defined(_M_IX86)
+    _mm_pause();
+#elif defined(__aarch64__) || defined(__ARM64__) || defined(_M_ARM64)
+    __asm__ __volatile__("yield" ::: "memory");
+#else
+    (void)0;
+#endif
+}
 
 template <typename TKey, typename TValue, typename MapContainer> struct MapContainerAdapter;
 
@@ -71,7 +86,7 @@ class MultiPerfectArrayHashMapSearcher {
                     key_map_array[i] = {key, map};
                     entry_j_array[i] = map->get_entry_ptr_j_with_prefetch(key);
                 }
-                _mm_pause();
+                multi_map_search_cpu_pause();
 
                 std::array<std::tuple<const typename MapType::Entry *, const TValue *>, N>
                     entry_k_or_result_array;
@@ -80,7 +95,7 @@ class MultiPerfectArrayHashMapSearcher {
                     entry_k_or_result_array[i] =
                         map->get_entry_ptr_k_or_value_with_prefetch(key, entry_j_array[i]);
                 }
-                _mm_pause();
+                multi_map_search_cpu_pause();
 
                 std::array<const TValue *, N> result_array;
                 for (size_t i = 0; i < N; ++i) {

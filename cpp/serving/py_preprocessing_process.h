@@ -17,7 +17,7 @@
 #pragma once
 
 #include <common/types.h>
-#include <boost/process/child.hpp>
+#include <boost/process/v1/child.hpp>
 
 namespace metaspore::serving {
 
@@ -55,7 +55,7 @@ private:
     std::string service_script_file_;
     std::string preprocessor_config_dir_;
     std::string preprocessor_listen_addr_;
-    boost::process::child child_process_;
+    boost::process::v1::child child_process_;
     std::vector<std::string> input_names_;
     std::vector<std::string> output_names_;
 };

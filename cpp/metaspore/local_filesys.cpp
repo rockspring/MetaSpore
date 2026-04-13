@@ -127,7 +127,7 @@ SeekStream *LocalFileSystem::Open(const URI &path, const char *const mode, bool 
                 return nullptr;
             } else {
                 throw std::runtime_error(fmt::format("Open local file {} failed with mode {}: {}",
-                                                     path.name, mode, std::strerror(errno)));
+                                                     path.name, m, std::strerror(errno)));
             }
         }
         return new FileInputStream(std::move(ifs));
@@ -143,7 +143,7 @@ SeekStream *LocalFileSystem::Open(const URI &path, const char *const mode, bool 
                 return nullptr;
             } else {
                 throw std::runtime_error(fmt::format("Open local file {} failed with mode {}: {}",
-                                                     path.name, mode, std::strerror(errno)));
+                                                     path.name, m, std::strerror(errno)));
             }
         }
         return new FileOutputStream(std::move(ofs));

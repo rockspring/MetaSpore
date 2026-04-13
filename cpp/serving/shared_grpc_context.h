@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include <agrpc/asioGrpc.hpp>
+#include <agrpc/asio_grpc.hpp>
 
 namespace metaspore::serving {
 

@@ -21,6 +21,14 @@ import metaspore as ms
 S3_ROOT_DIR = './'
 
 
+def _column_names_from_file(path):
+    with open(path) as f:
+        return [line.strip() for line in f if line.strip()]
+
+
+_CSV_COLUMN_NAMES = _column_names_from_file(S3_ROOT_DIR + 'schema/wdl/column_name_demo.txt')
+
+
 class WideDeep(torch.nn.Module):
     def __init__(self):
         self.model_id = "WideDeep"
@@ -95,10 +103,12 @@ spark_session = ms.spark.get_session(local=True,
                                      batch_size=100,
                                      worker_count=estimator.worker_count,
                                      server_count=estimator.server_count)
-train_dataset = ms.input.read_s3_csv(spark_session, train_dataset_path, delimiter='\t')
+train_dataset = ms.input.read_s3_csv(
+    spark_session, train_dataset_path, delimiter='\t', column_names=_CSV_COLUMN_NAMES)
 model = estimator.fit(train_dataset)
 
 test_dataset_path = S3_ROOT_DIR + '/data/day_0_0.001_test_head10.csv'
-test_dataset = ms.input.read_s3_csv(spark_session, test_dataset_path, delimiter='\t')
+test_dataset = ms.input.read_s3_csv(
+    spark_session, test_dataset_path, delimiter='\t', column_names=_CSV_COLUMN_NAMES)
 result = model.transform(test_dataset)
 result.show()

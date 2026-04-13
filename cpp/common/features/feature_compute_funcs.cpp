@@ -30,16 +30,15 @@ struct StringBKDRHashState : public cp::KernelState {
     uint64_t seed = 0;
 };
 
-arrow::Status StringBKDRHashKernelString(cp::KernelContext *ctx, const cp::ExecBatch &batch,
-                                         arrow::Datum *out) {
+arrow::Status StringBKDRHashKernelString(cp::KernelContext *ctx, const cp::ExecSpan &span,
+                                         cp::ExecResult *out) {
     const StringBKDRHashState *state = (const StringBKDRHashState *)ctx->state();
-    auto input_array = batch[0].array_as<arrow::StringArray>();
+    auto input_array = std::make_shared<arrow::StringArray>(span[0].array.ToArrayData());
     arrow::UInt64Builder builder;
     ARROW_RETURN_NOT_OK(builder.Reserve(input_array->length()));
     for (auto &&elem : *input_array) {
         if (elem.has_value()) {
             if (elem->empty()) {
-                // empty string is treated as null
                 ARROW_RETURN_NOT_OK(builder.AppendNull());
             } else {
                 uint64_t hash = BKDRHash(elem->data(), elem->length(), 0);
@@ -50,14 +49,14 @@ arrow::Status StringBKDRHashKernelString(cp::KernelContext *ctx, const cp::ExecB
         }
     }
     ARROW_ASSIGN_OR_RAISE(auto array, builder.Finish());
-    *out->mutable_array() = *array->data();
+    out->value = array->data();
     return arrow::Status::OK();
 }
 
-arrow::Status StringBKDRHashKernelListString(cp::KernelContext *ctx, const cp::ExecBatch &batch,
-                                             arrow::Datum *out) {
+arrow::Status StringBKDRHashKernelListString(cp::KernelContext *ctx, const cp::ExecSpan &span,
+                                             cp::ExecResult *out) {
     const StringBKDRHashState *state = (const StringBKDRHashState *)ctx->state();
-    auto input_array = batch[0].array_as<arrow::ListArray>();
+    auto input_array = std::make_shared<arrow::ListArray>(span[0].array.ToArrayData());
     auto value_builder = std::make_shared<arrow::UInt64Builder>();
     arrow::ListBuilder builder(ctx->memory_pool(), value_builder,
                                std::make_shared<arrow::ListType>(arrow::uint64()));
@@ -87,7 +86,6 @@ arrow::Status StringBKDRHashKernelListString(cp::KernelContext *ctx, const cp::E
             } else {
                 ARROW_RETURN_NOT_OK(builder.Append());
                 for (int32_t j = begin; j < end; ++j) {
-                    // ignore nulls in each list
                     if (!values->IsNull(j)) {
                         auto elem = values->GetView(j);
                         if (elem.empty()) {
@@ -103,7 +101,7 @@ arrow::Status StringBKDRHashKernelListString(cp::KernelContext *ctx, const cp::E
         }
     }
     ARROW_ASSIGN_OR_RAISE(auto array, builder.Finish());
-    *out->mutable_array() = *array->data();
+    out->value = array->data();
     return arrow::Status::OK();
 }
 
@@ -128,19 +126,16 @@ arrow::Status AddStringBKDRHashFunction() {
         state->seed = BKDRHashWithEqualPostfix(name.c_str(), name.length(), 0);
         return state;
     };
-    cp::ScalarKernel string_kernel({cp::InputType::Array(arrow::utf8())}, arrow::uint64(),
-                                   /* exec = */ StringBKDRHashKernelString,
-                                   /* init = */ initfn);
-    string_kernel.can_write_into_slices = false;
+    cp::ScalarKernel string_kernel(
+        std::vector<cp::InputType>{arrow::utf8()}, arrow::uint64(),
+        StringBKDRHashKernelString, initfn);
     cp::ScalarKernel string_list_kernel(
-        {cp::InputType::Array(std::make_shared<arrow::ListType>(arrow::utf8()))},
+        std::vector<cp::InputType>{arrow::list(arrow::utf8())},
         std::static_pointer_cast<arrow::DataType>(
             std::make_shared<arrow::ListType>(arrow::uint64())),
-        /* exec = */ StringBKDRHashKernelListString,
-        /* init = */ initfn);
-    string_list_kernel.can_write_into_slices = false;
+        StringBKDRHashKernelListString, initfn);
     auto func =
-        std::make_shared<cp::ScalarFunction>("bkdr_hash", cp::Arity::Unary(), &bkdr_func_doc);
+        std::make_shared<cp::ScalarFunction>("bkdr_hash", cp::Arity::Unary(), bkdr_func_doc);
     ARROW_RETURN_NOT_OK(func->AddKernel(std::move(string_kernel)));
     ARROW_RETURN_NOT_OK(func->AddKernel(std::move(string_list_kernel)));
     ARROW_RETURN_NOT_OK(registry->AddFunction(func));
@@ -155,15 +150,14 @@ static const cp::FunctionDoc bkdr_hash_combine_func_doc{
 
 template <typename T> using Container = std::vector<T>;
 
-arrow::Status BKDRHashCombineKernelListUInt64(cp::KernelContext *ctx, const cp::ExecBatch &batch,
-                                              arrow::Datum *out) {
+arrow::Status BKDRHashCombineKernelListUInt64(cp::KernelContext *ctx, const cp::ExecSpan &span,
+                                              cp::ExecResult *out) {
     Container<std::shared_ptr<arrow::Array>> arrays;
-    for (const auto &v : batch.values) {
-        if (!v.is_array()) {
+    for (int i = 0; i < span.num_values(); ++i) {
+        if (!span[i].is_array()) {
             return arrow::Status::Invalid("BKDRHashCombineKernelListUInt64 only handles array");
         }
-        auto array = v.make_array();
-        arrays.push_back(array);
+        arrays.push_back(arrow::MakeArray(span[i].array.ToArrayData()));
     }
 
     ARROW_ASSIGN_OR_RAISE(auto accessor_maker,
@@ -172,17 +166,16 @@ arrow::Status BKDRHashCombineKernelListUInt64(cp::KernelContext *ctx, const cp::
     auto value_builder = std::make_shared<arrow::UInt64Builder>();
     arrow::ListBuilder builder(ctx->memory_pool(), value_builder,
                                std::make_shared<arrow::ListType>(arrow::uint64()));
-    ARROW_RETURN_NOT_OK(builder.Reserve(batch.length));
-    for (int64_t i = 0; i < batch.length; ++i) {
+    ARROW_RETURN_NOT_OK(builder.Reserve(span.length));
+    for (int64_t i = 0; i < span.length; ++i) {
         Container<HashListAccessor> lists;
-        lists.reserve(batch.values.size());
-        for (size_t j = 0; j < batch.values.size(); ++j) {
+        lists.reserve(span.num_values());
+        for (int j = 0; j < span.num_values(); ++j) {
             lists.emplace_back(accessor_maker[j](i));
         }
         size_t total_results =
             std::accumulate(lists.begin(), lists.end(), size_t(1),
                             [](size_t mul, auto &&accessor) { return accessor.size() * mul; });
-        // lists is empty or one of the list is empty
         if (total_results == 0) {
             ARROW_RETURN_NOT_OK(builder.AppendNull());
         } else {
@@ -193,21 +186,20 @@ arrow::Status BKDRHashCombineKernelListUInt64(cp::KernelContext *ctx, const cp::
         }
     }
     ARROW_ASSIGN_OR_RAISE(auto array, builder.Finish());
-    *out->mutable_array() = *array->data();
+    out->value = array->data();
     return arrow::Status::OK();
 }
 
 arrow::Status AddBKDRHashCombineFunction() {
     cp::FunctionRegistry *registry = cp::GetFunctionRegistry();
     cp::ScalarKernel kernel(
-        cp::KernelSignature::Make({cp::InputType(/* ANY_TYPE */ arrow::ValueDescr::ARRAY)},
+        cp::KernelSignature::Make(std::vector<cp::InputType>{cp::InputType()},
                                   std::static_pointer_cast<arrow::DataType>(
                                       std::make_shared<arrow::ListType>(arrow::uint64())),
-                                  /* is_varargs = */ true),
-        /* exec = */ BKDRHashCombineKernelListUInt64);
-    kernel.can_write_into_slices = false;
+                                  true),
+        BKDRHashCombineKernelListUInt64);
     auto func = std::make_shared<cp::ScalarFunction>("bkdr_hash_combine", cp::Arity::VarArgs(1),
-                                                     &bkdr_hash_combine_func_doc);
+                                                     bkdr_hash_combine_func_doc);
     ARROW_RETURN_NOT_OK(func->AddKernel(std::move(kernel)));
     ARROW_RETURN_NOT_OK(registry->AddFunction(func));
     return arrow::Status::OK();

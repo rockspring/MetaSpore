@@ -61,14 +61,7 @@ class OrtModelContext {
     std::vector<const char *> input_names_;
     std::vector<const char *> output_names_;
 
-    ~OrtModelContext() {
-        for (auto p : input_names_) {
-            ::free((void *)p);
-        }
-        for (auto p : output_names_) {
-            ::free((void *)p);
-        }
-    }
+    ~OrtModelContext() = default;
 };
 
 OrtModel::OrtModel() : context_(std::make_unique<OrtModelContext>()) {}
@@ -102,23 +95,16 @@ awaitable_status OrtModel::load(std::string dir_path) {
             }
             context_->session_ =
                 Ort::Session(get_ort_model_global().env_, file.c_str(), context_->session_options_);
-            const size_t input_count = context_->session_.GetInputCount();
-            context_->input_names_.reserve(input_count);
-            context_->input_names_s_.reserve(input_count);
-
-            for (size_t i = 0UL; i < input_count; ++i) {
-                context_->input_names_.push_back(
-                    context_->session_.GetInputName(i, context_->allocator_));
-                context_->input_names_s_.push_back(context_->input_names_.back());
+            context_->input_names_s_ = context_->session_.GetInputNames();
+            context_->input_names_.reserve(context_->input_names_s_.size());
+            for (const auto &name : context_->input_names_s_) {
+                context_->input_names_.push_back(name.c_str());
             }
 
-            const size_t output_count = context_->session_.GetOutputCount();
-            context_->output_names_.reserve(output_count);
-            context_->output_names_s_.reserve(output_count);
-            for (size_t i = 0UL; i < output_count; ++i) {
-                context_->output_names_.push_back(
-                    context_->session_.GetOutputName(i, context_->allocator_));
-                context_->output_names_s_.push_back(context_->output_names_.back());
+            context_->output_names_s_ = context_->session_.GetOutputNames();
+            context_->output_names_.reserve(context_->output_names_s_.size());
+            for (const auto &name : context_->output_names_s_) {
+                context_->output_names_.push_back(name.c_str());
             }
 
             context_->dir_path_ = dir_path;

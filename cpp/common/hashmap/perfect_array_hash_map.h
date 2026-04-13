@@ -20,15 +20,27 @@
 #include <common/hashmap/map_file_header.h>
 #include <iostream>
 #include <memory>
-#include <mmintrin.h>
 #include <sstream>
 #include <stdexcept>
 #include <stdint.h>
 #include <tuple>
 #include <utility>
+
+#if defined(__x86_64__) || defined(_M_AMD64) || defined(_M_X64) || defined(__i386__) ||           \
+    defined(_M_IX86)
 #include <xmmintrin.h>
+#endif
 
 namespace metaspore {
+
+inline void perfect_array_hash_map_prefetch_nta(const void *p) {
+#if defined(__x86_64__) || defined(_M_AMD64) || defined(_M_X64) || defined(__i386__) ||           \
+    defined(_M_IX86)
+    _mm_prefetch(reinterpret_cast<const char *>(p), _MM_HINT_NTA);
+#else
+    __builtin_prefetch(p, 0, 0);
+#endif
+}
 
 template <typename TKey, typename TValue> class PerfectArrayHashMap {
   public:
@@ -175,7 +187,7 @@ template <typename TKey, typename TValue> class PerfectArrayHashMap {
             1 + HashtableHelpers::universal_hash(key, outer_a_, outer_b_, bucket_count_);
         const auto *ptr = get_entry_ptr(j);
         if constexpr (prefetch)
-            _mm_prefetch(ptr, _MM_HINT_NTA);
+            perfect_array_hash_map_prefetch_nta(ptr);
         return ptr;
     }
 
@@ -194,7 +206,7 @@ template <typename TKey, typename TValue> class PerfectArrayHashMap {
         const uint64_t k = ref + HashtableHelpers::universal_hash(key, a, b, mj);
         const Entry *const e = get_entry_ptr(k);
         if constexpr (prefetch)
-            _mm_prefetch(e, _MM_HINT_NTA);
+            perfect_array_hash_map_prefetch_nta(e);
         return {e, nullptr};
     }
 

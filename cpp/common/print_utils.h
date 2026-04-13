@@ -21,10 +21,10 @@
 #include <fmt/format.h>
 #include <fmt/ostream.h>
 #include <fmt/ranges.h>
-#include <onnxruntime_cxx_api.h>
-#include <xtensor/xadapt.hpp>
-#include <xtensor/xarray.hpp>
-#include <xtensor/xio.hpp>
+#include <onnxruntime/onnxruntime_cxx_api.h>
+#include <xtensor/containers/xadapt.hpp>
+#include <xtensor/containers/xarray.hpp>
+#include <xtensor/io/xio.hpp>
 
 namespace metaspore {
 

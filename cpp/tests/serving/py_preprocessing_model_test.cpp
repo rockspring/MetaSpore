@@ -15,8 +15,8 @@
 //
 
 #include <boost/dll/runtime_symbol_info.hpp>
-#include <boost/process/system.hpp>
-#include <boost/process/search_path.hpp>
+#include <boost/process/v1/system.hpp>
+#include <boost/process/v1/search_path.hpp>
 #include <boost/asio/use_future.hpp>
 #include <common/test_utils.h>
 #include <serving/py_preprocessing_model.h>

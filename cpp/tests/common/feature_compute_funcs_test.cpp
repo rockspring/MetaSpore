@@ -97,17 +97,17 @@ TEST(FeatureComputeFuncsTestSuite, TestMultiStringListBkdrHashAndCombineFunc) {
     std::shared_ptr<arrow::UInt64Builder> uint64_builder = std::make_shared<arrow::UInt64Builder>();
     arrow::ListBuilder uint64_list_builder{arrow::default_memory_pool(), uint64_builder,
                                            std::make_shared<arrow::ListType>(arrow::uint64())};
-    std::vector<Builders> builders;
+    std::vector<std::unique_ptr<Builders>> builders;
     for (size_t i = 0; i < 3; ++i) {
-        builders.emplace_back(Builders("column_name_" + std::to_string(i)));
+        builders.push_back(std::make_unique<Builders>("column_name_" + std::to_string(i)));
     }
     for (int i = 0; i < 5; ++i) {
         std::vector<uint64_t> v(6, 0);
         ASSERT_OK(uint64_list_builder.Append());
         for (size_t k = 0; k < 3; ++k) {
-            auto &string_list_builder = builders[k].string_list_builder;
-            auto &string_builder = builders[k].string_builder;
-            auto seed = builders[k].seed;
+            auto &string_list_builder = builders[k]->string_list_builder;
+            auto &string_builder = builders[k]->string_builder;
+            auto seed = builders[k]->seed;
             ASSERT_OK(string_list_builder.Append());
             for (int j = 0; j < k + 1; ++j) {
                 std::string s = fmt::format("test_123_{}_{}_{}", k, i, j);
@@ -138,7 +138,7 @@ TEST(FeatureComputeFuncsTestSuite, TestMultiStringListBkdrHashAndCombineFunc) {
                 }
             }
             if (i % 3 == 1) {
-                ASSERT_OK(builders[k].string_list_builder.AppendNull());
+                ASSERT_OK(builders[k]->string_list_builder.AppendNull());
             }
         }
         for (auto h : v) {
@@ -150,8 +150,8 @@ TEST(FeatureComputeFuncsTestSuite, TestMultiStringListBkdrHashAndCombineFunc) {
     }
     std::vector<arrow::Datum> hash_outputs;
     for (size_t k = 0; k < 3; ++k) {
-        ASSERT_OK_AND_ASSIGN(auto array, builders[k].string_list_builder.Finish());
-        StringBKDRHashFunctionOption option{builders[k].column_name};
+        ASSERT_OK_AND_ASSIGN(auto array, builders[k]->string_list_builder.Finish());
+        StringBKDRHashFunctionOption option{builders[k]->column_name};
         ASSERT_OK_AND_ASSIGN(auto datum,
                              arrow::compute::CallFunction("bkdr_hash", {array}, &option));
         hash_outputs.push_back(std::move(datum));

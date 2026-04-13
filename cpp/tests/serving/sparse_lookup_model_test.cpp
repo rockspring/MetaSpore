@@ -35,13 +35,13 @@ TEST(SparseLookupModelTestSuite, SparseLookupModelTest) {
             auto s = co_await slm.load("sparse_model");
             EXPECT_TRUE(s.ok());
             if (!s.ok()) {
-                fmt::print(stderr, "load failed: {}", s);
+                fmt::print(stderr, "load failed: {}", s.ToString());
                 co_return;
             }
             auto size_result = co_await slm.get_vector_size();
             EXPECT_TRUE(size_result.ok());
             if (!size_result.ok()) {
-                fmt::print(stderr, "get vector size failed: {}", size_result.status());
+                fmt::print(stderr, "get vector size failed: {}", size_result.status().ToString());
                 co_return;
             }
             auto size = *size_result;
@@ -59,7 +59,7 @@ TEST(SparseLookupModelTestSuite, SparseLookupModelTest) {
                 auto values_result = co_await slm.predict(std::move(input));
                 EXPECT_TRUE(values_result.ok());
                 if (!values_result.ok()) {
-                    fmt::print(stderr, "lookup failed {}\n", values_result.status());
+                    fmt::print(stderr, "lookup failed {}\n", values_result.status().ToString());
                     co_return;
                 }
                 const auto *output =

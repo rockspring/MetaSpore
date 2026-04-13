@@ -28,10 +28,12 @@
 
 #include <arrow/api.h>
 #include <arrow/compute/api.h>
-#include <arrow/compute/exec/exec_plan.h>
+#include <arrow/acero/exec_plan.h>
+#include <arrow/acero/options.h>
 #include <arrow/util/async_generator.h>
 
 namespace cp = arrow::compute;
+namespace acero = arrow::acero;
 
 namespace metaspore {
 
@@ -40,32 +42,32 @@ using namespace std::string_literals;
 using channel_type =
     boost::asio::experimental::concurrent_channel<void(boost::system::error_code, cp::ExecBatch)>;
 
-class MSSourceNodeOptions : public cp::SourceNodeOptions {
+class MSSourceNodeOptions : public acero::SourceNodeOptions {
   public:
     MSSourceNodeOptions(
         const std::string &name_, std::shared_ptr<arrow::Schema> output_schema,
-        std::function<arrow::Future<arrow::util::optional<cp::ExecBatch>>()> generator)
-        : cp::SourceNodeOptions(output_schema, generator), name(name_) {}
+        std::function<arrow::Future<std::optional<cp::ExecBatch>>()> generator)
+        : acero::SourceNodeOptions(output_schema, generator), name(name_) {}
     std::string name;
 };
 
 class FeatureComputeExecContext {
   public:
     std::unordered_map<std::string, std::shared_ptr<MSSourceNodeOptions>> name_source_map_;
-    std::unordered_map<std::string, arrow::PushGenerator<arrow::util::optional<cp::ExecBatch>>>
+    std::unordered_map<std::string, arrow::PushGenerator<std::optional<cp::ExecBatch>>>
         name_gen_map_;
-    std::shared_ptr<cp::Declaration> root_decl_;
-    cp::ExecNode *root_node_{nullptr};
-    cp::ExecNode *root_before_sink_node_{nullptr};
+    std::shared_ptr<acero::Declaration> root_decl_;
+    acero::ExecNode *root_node_{nullptr};
+    acero::ExecNode *root_before_sink_node_{nullptr};
     channel_type channel_{Threadpools::get_compute_threadpool(), 10};
     arrow::Future<> sink_future_{arrow::Future<>::Make()};
-    std::shared_ptr<cp::ExecPlan> plan_;
+    std::shared_ptr<acero::ExecPlan> plan_;
 };
 
 class FeatureComputeContext {
   public:
-    std::unordered_map<std::string, cp::Declaration> name_source_map_;
-    std::shared_ptr<cp::Declaration> root_decl_;
+    std::unordered_map<std::string, acero::Declaration> name_source_map_;
+    std::shared_ptr<acero::Declaration> root_decl_;
 };
 
 FeatureComputeExec::FeatureComputeExec() { context_ = std::make_unique<FeatureComputeContext>(); }
@@ -82,14 +84,14 @@ status FeatureComputeExec::add_source(const std::string &name) {
         return absl::AlreadyExistsError(fmt::format("Input source {} already exists", name));
     }
     auto pair = context_->name_source_map_.emplace(
-        name, cp::Declaration{"source", MSSourceNodeOptions{name, nullptr, nullptr}});
-    context_->root_decl_ = std::make_shared<cp::Declaration>(pair.first->second);
+        name, acero::Declaration{"source", MSSourceNodeOptions{name, nullptr, nullptr}});
+    context_->root_decl_ = std::make_shared<acero::Declaration>(pair.first->second);
     return absl::OkStatus();
 }
 
 status FeatureComputeExec::add_join_plan(const std::string &left_source_name,
                                          const std::string &right_source_name,
-                                         cp::JoinType join_type,
+                                         acero::JoinType join_type,
                                          const std::vector<std::string> &left_key_names,
                                          const std::vector<std::string> &right_key_names) {
     auto left_source = context_->name_source_map_.find(left_source_name);
@@ -105,7 +107,7 @@ status FeatureComputeExec::add_join_plan(const std::string &left_source_name,
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wfree-nonheap-object"
-    cp::HashJoinNodeOptions join_opts{
+    acero::HashJoinNodeOptions join_opts{
         join_type, left_key_names | ranges::views::transform([](const std::string &name) {
                        return arrow::FieldRef(name);
                    }) | ranges::to<std::vector>(),
@@ -114,39 +116,38 @@ status FeatureComputeExec::add_join_plan(const std::string &left_source_name,
         }) | ranges::to<std::vector>()};
 #pragma GCC diagnostic pop
 
-    cp::Declaration join(
+    acero::Declaration join(
         "hashjoin",
-        {cp::Declaration::Input(left_source->second), cp::Declaration::Input(right_source->second)},
+        {acero::Declaration::Input(left_source->second), acero::Declaration::Input(right_source->second)},
         join_opts, "join_node");
-    context_->root_decl_ = std::make_shared<cp::Declaration>(std::move(join));
+    context_->root_decl_ = std::make_shared<acero::Declaration>(std::move(join));
     return absl::OkStatus();
 }
 
 status FeatureComputeExec::add_projection(std::vector<arrow::compute::Expression> expressions) {
-    cp::ProjectNodeOptions options(std::move(expressions));
-    cp::Declaration project("project", {cp::Declaration::Input(*context_->root_decl_)}, options,
+    acero::ProjectNodeOptions options(std::move(expressions));
+    acero::Declaration project("project", {acero::Declaration::Input(*context_->root_decl_)}, options,
                             "project_node");
-    context_->root_decl_ = std::make_shared<cp::Declaration>(std::move(project));
+    context_->root_decl_ = std::make_shared<acero::Declaration>(std::move(project));
     return absl::OkStatus();
 }
 
 static void find_source_node(std::shared_ptr<FeatureComputeExecContext> &ctx,
-                             cp::Declaration &decl) {
+                             acero::Declaration &decl) {
     if (decl.factory_name == "source") {
         auto source_option = std::static_pointer_cast<MSSourceNodeOptions>(decl.options);
-        // decl.options is a shared pointer, we need to make a deep copy
         auto source_option_copied = std::make_shared<MSSourceNodeOptions>(*source_option);
         decl.options = source_option_copied;
         ctx->name_source_map_.emplace(source_option->name, source_option_copied);
     }
     for (auto &input : decl.inputs) {
-        find_source_node(ctx, arrow::util::get<cp::Declaration>(input));
+        find_source_node(ctx, std::get<acero::Declaration>(input));
     }
 }
 
 result<std::shared_ptr<FeatureComputeExecContext>> FeatureComputeExec::start_plan() const {
     auto ctx = std::make_shared<FeatureComputeExecContext>();
-    ctx->root_decl_ = std::make_shared<cp::Declaration>(*context_->root_decl_);
+    ctx->root_decl_ = std::make_shared<acero::Declaration>(*context_->root_decl_);
     find_source_node(ctx, *ctx->root_decl_);
     return ctx;
 }
@@ -164,7 +165,7 @@ status FeatureComputeExec::set_input_schema(std::shared_ptr<FeatureComputeExecCo
     auto source_option = find->second;
     source_option->output_schema = schema;
     auto pair = ctx->name_gen_map_.emplace(
-        source_name, arrow::PushGenerator<arrow::util::optional<cp::ExecBatch>>{});
+        source_name, arrow::PushGenerator<std::optional<cp::ExecBatch>>{});
     source_option->generator = pair.first->second;
     return absl::OkStatus();
 }
@@ -179,7 +180,7 @@ status FeatureComputeExec::feed_input(std::shared_ptr<FeatureComputeExecContext>
     }
     cp::ExecBatch exec_batch(*batch);
     source->second.producer().Push(
-        arrow::util::make_optional<cp::ExecBatch>(std::move(exec_batch)));
+        std::make_optional<cp::ExecBatch>(std::move(exec_batch)));
     return absl::OkStatus();
 }
 
@@ -192,10 +193,16 @@ FeatureComputeExec::execute(std::shared_ptr<FeatureComputeExecContext> &ctx) con
     co_return rb_result;
 }
 
-struct SinkConsumer : public cp::SinkNodeConsumer {
+struct SinkConsumer : public acero::SinkNodeConsumer {
 
     SinkConsumer(std::shared_ptr<arrow::Schema> schema, channel_type &ch, arrow::Future<> fut)
         : output_schema_(schema), channel_(ch), fut_(std::move(fut)) {}
+
+    arrow::Status Init(const std::shared_ptr<arrow::Schema> &schema,
+                       acero::BackpressureControl *backpressure_control,
+                       acero::ExecPlan *plan) override {
+        return arrow::Status::OK();
+    }
 
     arrow::Status Consume(cp::ExecBatch batch) override {
         bool s = channel_.try_send(boost::system::error_code(), std::move(batch));
@@ -214,14 +221,13 @@ struct SinkConsumer : public cp::SinkNodeConsumer {
 };
 
 status FeatureComputeExec::build_plan(std::shared_ptr<FeatureComputeExecContext> &ctx) const {
-    ASSIGN_RESULT_OR_RETURN_NOT_OK(auto plan, cp::ExecPlan::Make());
-    // create sink reader
+    ASSIGN_RESULT_OR_RETURN_NOT_OK(auto plan, acero::ExecPlan::Make());
     ASSIGN_RESULT_OR_RETURN_NOT_OK(auto root_result, ctx->root_decl_->AddToPlan(plan.get()));
     ctx->root_before_sink_node_ = root_result;
     ASSIGN_RESULT_OR_RETURN_NOT_OK(
         auto sink_result,
-        cp::MakeExecNode("consuming_sink", plan.get(), {root_result},
-                         cp::ConsumingSinkNodeOptions{std::make_shared<SinkConsumer>(
+        acero::MakeExecNode("consuming_sink", plan.get(), {root_result},
+                         acero::ConsumingSinkNodeOptions{std::make_shared<SinkConsumer>(
                              root_result->output_schema(), ctx->channel_, ctx->sink_future_)}));
     ctx->root_node_ = sink_result;
 
@@ -229,7 +235,7 @@ status FeatureComputeExec::build_plan(std::shared_ptr<FeatureComputeExecContext>
     CALL_AND_RETURN_IF_STATUS_NOT_OK(plan->Validate());
     SPDLOG_DEBUG("FeatureComputeExec created plan {}", plan->ToString());
     // start the ExecPlan
-    CALL_AND_RETURN_IF_STATUS_NOT_OK(plan->StartProducing());
+    plan->StartProducing();
     ctx->plan_ = plan;
     return absl::OkStatus();
 }
@@ -237,7 +243,7 @@ status FeatureComputeExec::build_plan(std::shared_ptr<FeatureComputeExecContext>
 status FeatureComputeExec::finish_plan(std::shared_ptr<FeatureComputeExecContext> &ctx) const {
     for (auto &[name, queue] : ctx->name_gen_map_) {
         // to trigger arrow source node finish its async future loop
-        queue.producer().Push(arrow::IterationTraits<arrow::util::optional<cp::ExecBatch>>::End());
+        queue.producer().Push(arrow::IterationTraits<std::optional<cp::ExecBatch>>::End());
     }
     // context_->plan_->StopProducing();
     ctx->sink_future_.MarkFinished();
@@ -249,11 +255,11 @@ status FeatureComputeExec::finish_plan(std::shared_ptr<FeatureComputeExecContext
     return ArrowStatusToAbsl::arrow_status_to_absl(plan->finished().status());
 }
 
-void FeatureComputeExec::finish_join(arrow::compute::ExecNode *node) const {
+void FeatureComputeExec::finish_join(acero::ExecNode *node) const {
     for (auto input : node->inputs()) {
         if (input->label() == "join_node"s) {
             for (auto recurse_input : input->inputs()) {
-                input->InputFinished(recurse_input, 1);
+                (void)input->InputFinished(recurse_input, 1);
             }
         }
         finish_join(input);

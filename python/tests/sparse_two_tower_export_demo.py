@@ -242,7 +242,7 @@ def export_module(module, path, model_export_selector):
                       path, input_names=name_list, output_names=[
                           "output"],
                       dynamic_axes=dynamic_axes_parameter,
-                      opset_version=14,
+                      opset_version=18,
                       verbose=True)
 
 

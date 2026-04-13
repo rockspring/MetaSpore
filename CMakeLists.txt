@@ -26,6 +26,13 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# -march=core-avx2 is x86-only; ARM/aarch64 images (e.g. docker build on Apple Silicon) need a different tune flag.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+    set(METASPORE_CPU_MARCH_FLAG "-march=core-avx2")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|ARM64|arm64)$")
+    set(METASPORE_CPU_MARCH_FLAG "-march=armv8-a")
+endif()
+
 message(STATUS "Compiler: ${CMAKE_CXX_COMPILER_ID}")
 if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++")
@@ -37,9 +44,14 @@ if (CMAKE_COMPILER_IS_GNUCC AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 11)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-free-nonheap-object")
 endif()
 
+# Use gold linker to reduce memory usage during linking
+if (CMAKE_COMPILER_IS_GNUCC)
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fuse-ld=gold")
+endif()
+
 # pyarrow does not enable _GLIBCXX_USE_CXX11_ABI, so do we
-string(REPLACE "-D_GLIBCXX_USE_CXX11_ABI=1" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-string(APPEND CMAKE_CXX_FLAGS " -D_GLIBCXX_USE_CXX11_ABI=0")
+#string(REPLACE "-D_GLIBCXX_USE_CXX11_ABI=1" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+#string(APPEND CMAKE_CXX_FLAGS " -D_GLIBCXX_USE_CXX11_ABI=0")
 
 option(BUILD_TRAIN_PKG "Enable training package build" ON)
 option(BUILD_SERVING_BIN "Enable serving binary build" ON)

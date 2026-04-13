@@ -88,7 +88,7 @@ TEST(TabularModelTestSuite, TabularModelTest) {
             ASSERT_EQUAL_COROUTINE((*result)->outputs.size(), 1UL);
             for (const auto &[name, value] : (*result)->outputs) {
                 fmt::print("TabularModel produced \"{}\", ort type {}\n", name,
-                           value.GetTypeInfo().GetONNXType());
+                           static_cast<int>(value.GetTypeInfo().GetONNXType()));
                 ASSERT_TRUE_COROUTINE(value.IsTensor());
                 auto tsi = value.GetTensorTypeAndShapeInfo();
                 fmt::print("Dims {}, shape [{}]\n", tsi.GetDimensionsCount(),

@@ -16,14 +16,14 @@
 
 function(get_python_wheel_name var)
     set(src)
-    string(APPEND src "import sys; ")
-    string(APPEND src "ver = '%d%d' % ")
-    string(APPEND src "(sys.version_info.major, sys.version_info.minor); ")
-    string(APPEND src "flag = 'u' if ver == '27' and ")
-    string(APPEND src "sys.maxunicode == 0x10ffff else ''; ")
-    string(APPEND src "flag += 'm' if ver == '37' else ''; ")
-    string(APPEND src "print('cp%s-cp%s%s-linux_x86_64' % ")
-    string(APPEND src "(ver, ver, flag), end='')")
+    string(APPEND src "import sys, sysconfig; ")
+    string(APPEND src "ver = '%d%d' % (sys.version_info.major, sys.version_info.minor); ")
+    string(APPEND src "impl = 'cp%s' % ver; ")
+    string(APPEND src "abi = impl ")
+    string(APPEND src "+ ('u' if ver == '27' and sys.maxunicode == 0x10ffff else '') ")
+    string(APPEND src "+ ('m' if sys.version_info[:2] <= (3, 7) else ''); ")
+    string(APPEND src "plat = sysconfig.get_platform().replace('-', '_').replace('.', '_'); ")
+    string(APPEND src "print('%s-%s-%s' % (impl, abi, plat), end=''); ")
     execute_process(
         COMMAND ${Python_EXECUTABLE} -c "${src}"
         RESULT_VARIABLE rc

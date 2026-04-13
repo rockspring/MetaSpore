@@ -16,9 +16,8 @@
 
 #include <arrow/api.h>
 #include <arrow/compute/api.h>
-#include <arrow/compute/exec/exec_plan.h>
-#include <arrow/compute/exec/options.h>
-#include <arrow/util/async_generator.h>
+#include <arrow/acero/exec_plan.h>
+#include <arrow/acero/options.h>
 
 #include <absl/status/status.h>
 #include <boost/asio/experimental/concurrent_channel.hpp>
@@ -31,23 +30,72 @@
 #include <common/threadpool.h>
 #include <common/utils.h>
 
+#include <queue>
+
 using namespace metaspore;
 using namespace std::string_literals;
+
+namespace acero = arrow::acero;
 
 using channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code,
                                                                         arrow::compute::ExecBatch)>;
 
+template <typename T>
+class PushGenerator {
+    struct State {
+        std::queue<T> values;
+        std::queue<arrow::Future<T>> waiters;
+        std::mutex mtx;
+    };
+    std::shared_ptr<State> state_ = std::make_shared<State>();
+
+  public:
+    class Producer {
+        std::shared_ptr<State> state_;
+
+      public:
+        explicit Producer(std::shared_ptr<State> s) : state_(std::move(s)) {}
+        void Push(T value) {
+            std::lock_guard<std::mutex> lock(state_->mtx);
+            if (!state_->waiters.empty()) {
+                auto fut = std::move(state_->waiters.front());
+                state_->waiters.pop();
+                fut.MarkFinished(std::move(value));
+            } else {
+                state_->values.push(std::move(value));
+            }
+        }
+        void Close() { Push(std::nullopt); }
+    };
+
+    Producer producer() { return Producer(state_); }
+
+    arrow::Future<T> operator()() {
+        std::lock_guard<std::mutex> lock(state_->mtx);
+        if (!state_->values.empty()) {
+            auto val = std::move(state_->values.front());
+            state_->values.pop();
+            auto fut = arrow::Future<T>::Make();
+            fut.MarkFinished(std::move(val));
+            return fut;
+        }
+        auto fut = arrow::Future<T>::Make();
+        state_->waiters.push(fut);
+        return fut;
+    }
+};
+
 class FeatureComputeContext {
   public:
     struct InputSource {
-        arrow::PushGenerator<arrow::util::optional<arrow::compute::ExecBatch>> input_queue;
-        arrow::compute::ExecNode *node;
+        PushGenerator<std::optional<arrow::compute::ExecBatch>> input_queue;
+        acero::ExecNode *node;
     };
 
-    std::shared_ptr<arrow::compute::ExecPlan> plan_;
+    std::shared_ptr<acero::ExecPlan> plan_;
     std::unordered_map<std::string, InputSource> name_source_map_;
-    arrow::compute::ExecNode *root_node_{nullptr};
-    arrow::compute::ExecNode *join_node_{nullptr};
+    acero::ExecNode *root_node_{nullptr};
+    acero::ExecNode *join_node_{nullptr};
     channel_type channel_{Threadpools::get_compute_threadpool(), 10};
     arrow::Future<> sink_future_{arrow::Future<>::Make()};
 };
@@ -58,11 +106,13 @@ absl::Status add_source(std::unique_ptr<FeatureComputeContext> &context_, const 
     if (!pair.second) {
         return absl::AlreadyExistsError(fmt::format("Input source {} already exists", name));
     }
-    auto node_result = arrow::compute::MakeExecNode(
+    auto node_result = acero::MakeExecNode(
         "source", context_->plan_.get(), /* inputs = */ {},
-        arrow::compute::SourceNodeOptions{schema, pair.first->second.input_queue});
+        acero::SourceNodeOptions{schema,
+            std::function<arrow::Future<std::optional<arrow::compute::ExecBatch>>()>(
+                pair.first->second.input_queue)});
     if (!node_result.ok()) {
-        return absl::InternalError(node_result.status().message());
+        return absl::InternalError(std::string(node_result.status().message()));
     }
     pair.first->second.node = *node_result;
     context_->root_node_ = *node_result;
@@ -78,13 +128,13 @@ absl::Status feed_input(std::unique_ptr<FeatureComputeContext> &context_,
     }
     arrow::compute::ExecBatch exec_batch(*batch);
     source->second.input_queue.producer().Push(
-        arrow::util::make_optional<arrow::compute::ExecBatch>(std::move(exec_batch)));
+        std::make_optional<arrow::compute::ExecBatch>(std::move(exec_batch)));
     return absl::OkStatus();
 }
 
 absl::Status add_join_plan(std::unique_ptr<FeatureComputeContext> &context_,
                            const std::string &left_source_name,
-                           const std::string &right_source_name, arrow::compute::JoinType join_type,
+                           const std::string &right_source_name, acero::JoinType join_type,
                            const std::vector<std::string> &left_key_names,
                            const std::vector<std::string> &right_key_names) {
     auto left_source = context_->name_source_map_.find(left_source_name);
@@ -100,7 +150,7 @@ absl::Status add_join_plan(std::unique_ptr<FeatureComputeContext> &context_,
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wfree-nonheap-object"
-    arrow::compute::HashJoinNodeOptions join_opts{
+    acero::HashJoinNodeOptions join_opts{
         join_type, left_key_names | ranges::views::transform([](const std::string &name) {
                        return arrow::FieldRef(name);
                    }) | ranges::to<std::vector>(),
@@ -109,21 +159,27 @@ absl::Status add_join_plan(std::unique_ptr<FeatureComputeContext> &context_,
         }) | ranges::to<std::vector>()};
 #pragma GCC diagnostic pop
 
-    auto hashjoin = arrow::compute::MakeExecNode(
+    auto hashjoin = acero::MakeExecNode(
         "hashjoin", context_->plan_.get(), {left_source->second.node, right_source->second.node},
         join_opts);
     if (!hashjoin.ok()) {
-        return absl::InternalError(hashjoin.status().message());
+        return absl::InternalError(std::string(hashjoin.status().message()));
     }
     context_->root_node_ = *hashjoin;
     context_->join_node_ = *hashjoin;
     return absl::OkStatus();
 }
 
-struct SinkConsumer : public arrow::compute::SinkNodeConsumer {
+struct SinkConsumer : public acero::SinkNodeConsumer {
 
     SinkConsumer(std::shared_ptr<arrow::Schema> schema, channel_type &ch, arrow::Future<> fut)
         : output_schema_(schema), channel_(ch), fut_(std::move(fut)) {}
+
+    arrow::Status Init(const std::shared_ptr<arrow::Schema>&,
+                       acero::BackpressureControl*,
+                       arrow::acero::ExecPlan*) override {
+        return arrow::Status::OK();
+    }
 
     arrow::Status Consume(arrow::compute::ExecBatch batch) override {
         fmt::print("consuming batch\n");
@@ -148,26 +204,20 @@ struct SinkConsumer : public arrow::compute::SinkNodeConsumer {
 };
 
 absl::Status finish_plan(std::unique_ptr<FeatureComputeContext> &context_) {
-    // create sink reader
-    auto sink_result = arrow::compute::MakeExecNode(
+    auto sink_result = acero::MakeExecNode(
         "consuming_sink", context_->plan_.get(), {context_->root_node_},
-        arrow::compute::ConsumingSinkNodeOptions{std::make_shared<SinkConsumer>(
+        acero::ConsumingSinkNodeOptions{std::make_shared<SinkConsumer>(
             context_->root_node_->output_schema(), context_->channel_, context_->sink_future_)});
     if (!sink_result.ok()) {
-        return absl::InternalError(sink_result.status().message());
+        return absl::InternalError(std::string(sink_result.status().message()));
     }
 
-    // validate the ExecPlan
     auto validate = context_->plan_->Validate();
     if (!validate.ok()) {
-        return absl::InternalError(validate.message());
+        return absl::InternalError(std::string(validate.message()));
     }
     spdlog::info("FeatureComputeExec created plan {}", context_->plan_->ToString());
-    // start the ExecPlan
-    auto start = context_->plan_->StartProducing();
-    if (!start.ok()) {
-        return absl::InternalError(start.message());
-    }
+    context_->plan_->StartProducing();
     return absl::OkStatus();
 }
 
@@ -191,7 +241,7 @@ get_output(std::unique_ptr<FeatureComputeContext> &context_) {
     cv.wait(lk, [&] { return ready; });
     auto rb_result = exec_batch.ToRecordBatch(context_->root_node_->output_schema());
     if (!rb_result.ok()) {
-        return absl::InternalError(rb_result.status().message());
+        return absl::InternalError(std::string(rb_result.status().message()));
     }
     return *rb_result;
 }
@@ -203,7 +253,7 @@ absl::Status stop(std::unique_ptr<FeatureComputeContext> &context_) {
     context_->sink_future_.MarkFinished();
     const auto &s = context_->plan_->finished().status();
     if (!s.ok()) {
-        return absl::InternalError(fmt::format("Finish plan failed {}", s.message()));
+        return absl::InternalError(fmt::format("Finish plan failed {}", std::string(s.message())));
     }
     return absl::OkStatus();
 }
@@ -238,9 +288,9 @@ make_item_record_batch() {
 
 int main(int argc, char **argv) {
 
-    auto result = arrow::compute::ExecPlan::Make();
+    auto result = acero::ExecPlan::Make();
     if (!result.ok()) {
-        fmt::print(stderr, "{}\n", result.status());
+        fmt::print(stderr, "{}\n", result.status().ToString());
         return 1;
     }
     std::unique_ptr<FeatureComputeContext> context_ = std::make_unique<FeatureComputeContext>();
@@ -250,26 +300,26 @@ int main(int argc, char **argv) {
     auto [user_batch, user_schema] = make_user_record_batch();
     auto status = add_source(context_, user_table, user_schema);
     if (!status.ok()) {
-        fmt::print(stderr, "add source failed {}", status);
+        fmt::print(stderr, "add source failed {}", status.ToString());
         return 1;
     }
     auto [item_batch, item_schema] = make_item_record_batch();
     status = add_source(context_, item_table, item_schema);
     if (!status.ok()) {
-        fmt::print(stderr, "add source failed {}", status);
+        fmt::print(stderr, "add source failed {}", status.ToString());
         return 1;
     }
 
-    status = add_join_plan(context_, item_table, user_table, arrow::compute::JoinType::LEFT_OUTER,
+    status = add_join_plan(context_, item_table, user_table, acero::JoinType::LEFT_OUTER,
                            std::vector({"user_id"s}), std::vector({"user_id"s}));
     if (!status.ok()) {
-        fmt::print(stderr, "add join plan failed {}", status);
+        fmt::print(stderr, "add join plan failed {}", status.ToString());
         return 1;
     }
 
     status = finish_plan(context_);
     if (!status.ok()) {
-        fmt::print(stderr, "finish plan failed {}", status);
+        fmt::print(stderr, "finish plan failed {}", status.ToString());
         return 1;
     }
 
@@ -277,22 +327,22 @@ int main(int argc, char **argv) {
         // feed left table, item
         status = feed_input(context_, item_table, item_batch);
         if (!status.ok()) {
-            fmt::print(stderr, "feed left failed {}", status);
+            fmt::print(stderr, "feed left failed {}", status.ToString());
             return 1;
         }
         // feed right table, user
         status = feed_input(context_, user_table, user_batch);
         if (!status.ok()) {
-            fmt::print(stderr, "feed right failed {}", status);
+            fmt::print(stderr, "feed right failed {}", status.ToString());
             return 1;
         }
         for (auto node : context_->join_node_->inputs()) {
-            context_->join_node_->InputFinished(node, 1);
+            (void)context_->join_node_->InputFinished(node, 1);
         }
         // get output record batch
         auto output_result = get_output(context_);
         if (!output_result.ok()) {
-            fmt::print(stderr, "get output failed {}", output_result.status());
+            fmt::print(stderr, "get output failed {}", output_result.status().ToString());
             return 1;
         }
         auto record_batch = *output_result;
@@ -303,22 +353,22 @@ int main(int argc, char **argv) {
         // feed left table, item
         status = feed_input(context_, item_table, item_batch);
         if (!status.ok()) {
-            fmt::print(stderr, "feed left failed {}", status);
+            fmt::print(stderr, "feed left failed {}", status.ToString());
             return 1;
         }
         // feed right table, user
         status = feed_input(context_, user_table, user_batch);
         if (!status.ok()) {
-            fmt::print(stderr, "feed right failed {}", status);
+            fmt::print(stderr, "feed right failed {}", status.ToString());
             return 1;
         }
         for (auto node : context_->join_node_->inputs()) {
-            context_->join_node_->InputFinished(node, 1);
+            (void)context_->join_node_->InputFinished(node, 1);
         }
         // get output record batch
         auto output_result = get_output(context_);
         if (!output_result.ok()) {
-            fmt::print(stderr, "get output failed {}", output_result.status());
+            fmt::print(stderr, "get output failed {}", output_result.status().ToString());
             return 1;
         }
         auto record_batch = *output_result;
@@ -328,7 +378,7 @@ int main(int argc, char **argv) {
 
     status = stop(context_);
     if (!status.ok()) {
-        fmt::print(stderr, "stop plan failed {}", status);
+        fmt::print(stderr, "stop plan failed {}", status.ToString());
         return 1;
     }
 

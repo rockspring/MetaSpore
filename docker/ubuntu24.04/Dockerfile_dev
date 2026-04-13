@@ -1,0 +1,72 @@
+#
+# Copyright 2022 DMetaSoul
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+ARG RUNTIME=cpu
+FROM nvidia/cuda:11.6.2-cudnn8-devel-ubuntu24.04 as dev_gpu_base
+FROM ubuntu:24.04 as dev_cpu_base
+
+FROM dev_${RUNTIME}_base
+# 3. 限制并发防止 OOM (内存溢出)
+ENV VCPKG_MAX_CONCURRENCY=2
+#ENV http_proxy=http://172.17.0.1:7890
+#ENV https_proxy=http://172.17.0.1:7890
+ENV DEBIAN_FRONTEND=noninteractive
+# 在安装软件之前，先更换为清华大学镜像源 (针对 Ubuntu Ports / ARM 架构)
+RUN sed -i 's|ports.ubuntu.com|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/ubuntu.sources || \
+    sed -i 's|ports.ubuntu.com|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list
+RUN apt-get update && apt-get upgrade -y && apt-get clean
+RUN apt-get install -y locales
+RUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && \
+    locale-gen
+ENV LANG=en_US.UTF-8
+ENV LANGUAGE=en_US.UTF-8
+ENV LC_CTYPE=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+ENV TZ=Asia/Shanghai
+RUN ln -svf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && apt-get install -y tzdata && apt-get clean
+RUN apt-get install --fix-missing -y build-essential curl python3 python3-venv python3-pip python-is-python3 ca-certificates ninja-build git wget gnupg2 && apt-get clean
+
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3 30
+ENV VIRTUAL_ENV=/opt/venv
+RUN python3 -m venv $VIRTUAL_ENV
+# 将虚拟环境的 bin 目录加入 PATH，这样之后运行 python 或 pip 都会默认使用虚拟环境
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+RUN python -m pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple/
+RUN python -m pip config set global.extra-index-url "https://pypi.tuna.tsinghua.edu.cn/simple/ https://pypi.org/simple/"
+RUN python -m pip install 'grpcio[protobuf]' pyarrow numpy --no-cache-dir
+
+# 1. 增加构建工具
+RUN apt-get update && apt-get install -y \
+    autoconf autoconf-archive automake libtool pkg-config git ca-certificates
+# install gcc13 and latest cmake
+RUN apt-get -y install manpages-dev software-properties-common zip unzip tar pkg-config bison flex && apt-get clean
+RUN add-apt-repository ppa:ubuntu-toolchain-r/test
+RUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null 
+RUN apt-add-repository "deb https://apt.kitware.com/ubuntu/ $(lsb_release -cs) main" 
+RUN apt-get update
+RUN apt-get install -y gcc g++ cmake && apt-get clean
+
+
+RUN git clone https://github.com/Microsoft/vcpkg.git /opt/vcpkg
+RUN /opt/vcpkg/bootstrap-vcpkg.sh
+COPY vcpkg.json /opt/vcpkg.json
+COPY vcpkg-configuration.json /opt/vcpkg-configuration.json
+COPY overlay-ports /opt/overlay-ports
+RUN echo "set(VCPKG_C_FLAGS \"-g\")" >> /opt/vcpkg/triplets/x64-linux.cmake
+RUN echo "set(VCPKG_CXX_FLAGS \"-g\")" >> /opt/vcpkg/triplets/x64-linux.cmake
+RUN echo "set(VCPKG_BUILD_TYPE release)" >> /opt/vcpkg/triplets/x64-linux.cmake
+# --mount=type=bind,source=/opt/vcpkg_cache,target=/opt/vcpkg/downloads
+RUN /opt/vcpkg/vcpkg install --x-install-root=/opt/vcpkg_installed --x-manifest-root=/opt --clean-after-build

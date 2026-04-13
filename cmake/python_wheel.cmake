@@ -121,8 +121,8 @@ set(python_files
     python/ps/job.py
 )
 add_custom_command(OUTPUT ${wheel_file_name}
-                   COMMAND env _METASPORE_SO=${PROJECT_BINARY_DIR}/_metaspore.so
-                           ${Python_EXECUTABLE} -m pip wheel ${PROJECT_SOURCE_DIR}
+                   COMMAND env _METASPORE_SO=${PROJECT_BINARY_DIR}/_metaspore${CMAKE_SHARED_LIBRARY_SUFFIX}
+                           ${Python_EXECUTABLE} -m pip wheel --no-deps ${PROJECT_SOURCE_DIR}
                    MAIN_DEPENDENCY setup.py
                    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
                    DEPENDS metaspore_shared ${python_files} install_wheel)

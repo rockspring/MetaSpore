@@ -27,8 +27,14 @@ namespace metaspore {
 std::string GetThreadIdentifier() {
     std::ostringstream sout;
     sout << "pid: " << getpid() << ", ";
+#if defined(__APPLE__)
+    uint64_t tid = 0;
+    pthread_threadid_np(nullptr, &tid);
+    sout << "tid: " << tid << ", ";
+#else
     sout << "tid: " << syscall(SYS_gettid) << ", ";
-    sout << "thread: 0x" << std::hex << static_cast<uint64_t>(pthread_self());
+#endif
+    sout << "thread: 0x" << std::hex << reinterpret_cast<uintptr_t>(pthread_self());
     return sout.str();
 }
 

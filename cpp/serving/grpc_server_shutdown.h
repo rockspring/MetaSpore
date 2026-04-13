@@ -18,7 +18,7 @@
 
 #include <atomic>
 #include <thread>
-#include <agrpc/asioGrpc.hpp>
+#include <agrpc/asio_grpc.hpp>
 #include <boost/asio/signal_set.hpp>
 
 namespace metaspore::serving {

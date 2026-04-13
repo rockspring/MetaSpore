@@ -34,14 +34,25 @@ endfunction()
 function(get_pyarrow_library_path libname var)
     set(src)
     string(APPEND src "import pyarrow as pa; ")
-    string(APPEND src "import glob; ")
-    string(APPEND src "print(glob.glob(pa.get_library_dirs()[0] + '/${libname}.so.*')[0], end='')")
+    string(APPEND src "import glob, os; ")
+    string(APPEND src "libdir = pa.get_library_dirs()[0]; ")
+    string(APPEND src "patterns = [")
+    string(APPEND src "os.path.join(libdir, '${libname}.dylib'), ")
+    string(APPEND src "os.path.join(libdir, '${libname}.*.dylib'), ")
+    string(APPEND src "os.path.join(libdir, '${libname}.dylib.*'), ")
+    string(APPEND src "os.path.join(libdir, '${libname}.so'), ")
+    string(APPEND src "os.path.join(libdir, '${libname}.*.so'), ")
+    string(APPEND src "os.path.join(libdir, '${libname}.so.*'), ")
+    string(APPEND src "os.path.join(libdir, '${libname}.dll')")
+    string(APPEND src "]; ")
+    string(APPEND src "matches = [m for p in patterns for m in glob.glob(p)]; ")
+    string(APPEND src "print(matches[0] if matches else '', end='')")
     execute_process(
         COMMAND ${Python_EXECUTABLE} -c "${src}"
         RESULT_VARIABLE rc
         OUTPUT_VARIABLE libpath)
     if(NOT "${rc}" STREQUAL "0" OR "${libpath}" STREQUAL "")
-        message(FATAL_ERROR "Can not get pyarrow ${libname}.so path.")
+        message(FATAL_ERROR "Can not get pyarrow ${libname} library path.")
     endif()
     set("${var}" "${libpath}" PARENT_SCOPE)
 endfunction()
@@ -59,6 +70,7 @@ endfunction()
 get_pyarrow_include_dir(pyarrow_include_dir)
 get_pyarrow_libarrow_path(pyarrow_libarrow_path)
 get_pyarrow_libarrow_python_path(pyarrow_libarrow_python_path)
+get_pyarrow_library_path(libarrow_acero pyarrow_libarrow_acero_path)
 
 add_library(libarrow SHARED IMPORTED)
 set_target_properties(libarrow PROPERTIES
@@ -70,10 +82,17 @@ set_target_properties(libarrow_python PROPERTIES
     IMPORTED_LOCATION "${pyarrow_libarrow_python_path}"
     INTERFACE_LINK_LIBRARIES "libarrow")
 
+add_library(libarrow_acero SHARED IMPORTED)
+set_target_properties(libarrow_acero PROPERTIES
+    IMPORTED_LOCATION "${pyarrow_libarrow_acero_path}"
+    INTERFACE_LINK_LIBRARIES "libarrow")
+
 file(MAKE_DIRECTORY ${PROJECT_BINARY_DIR}/.libs)
 file(COPY "${pyarrow_libarrow_path}" DESTINATION ${PROJECT_BINARY_DIR}/.libs)
 file(COPY "${pyarrow_libarrow_python_path}" DESTINATION ${PROJECT_BINARY_DIR}/.libs)
+file(COPY "${pyarrow_libarrow_acero_path}" DESTINATION ${PROJECT_BINARY_DIR}/.libs)
 
 unset(pyarrow_include_dir)
 unset(pyarrow_libarrow_path)
 unset(pyarrow_libarrow_python_path)
+unset(pyarrow_libarrow_acero_path)

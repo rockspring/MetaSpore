@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include <onnxruntime_cxx_api.h>
+#include <onnxruntime/onnxruntime_cxx_api.h>
 #include <serving/model_base.h>
 #include <unordered_map>
 

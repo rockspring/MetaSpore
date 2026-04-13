@@ -10,12 +10,7 @@
         "boost-system",
         "boost-uuid",
         "boost-spirit",
-        {
-            "name": "asio-grpc",
-            "features": [
-                "boost-container"
-            ]
-        },
+        "asio-grpc",
         "protobuf",
         "fmt",
         "spdlog",
@@ -28,7 +23,7 @@
         "gtest",
         "gflags",
         "benchmark",
-        "onnxruntime-gpu-default",
+        "onnxruntime",
         "xtensor",
         "cppzmq",
         "python3",
@@ -46,12 +41,5 @@
         "zeromq",
         "zlib"
     ],
-    "overrides": [
-        {
-            "name": "python3",
-            "version": "3.8.3",
-            "port-version": 2
-        }
-    ],
-    "builtin-baseline": "e2794913924ef606cc7bbc59c173f2714e9853c5"
+    "builtin-baseline": "ed8445dd2a9ba44e0e3ace4e952b2e33130082d9"
 }

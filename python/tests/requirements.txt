@@ -1,6 +1,6 @@
 wheel
 grpcio-tools
-onnx
+onnx==1.20.1
 onnxmltools
 onnxruntime
 xgboost

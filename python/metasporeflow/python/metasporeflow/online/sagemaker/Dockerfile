@@ -48,7 +48,7 @@ RUN apt-get install --fix-missing -y python3 python3-venv python3-pip python-is-
 
 RUN update-alternatives --install /usr/bin/python python /usr/bin/python3 30
 RUN python -m pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple/
-RUN python -m pip config set globa.extra-index-url "https://pypi.tuna.tsinghua.edu.cn/simple/ https://pypi.org/simple/"
+RUN python -m pip config set global.extra-index-url "https://pypi.tuna.tsinghua.edu.cn/simple/ https://pypi.org/simple/"
 
 FROM ${SERVING_IMAGE} as serving_stage
 FROM ${RECOMMEND_IMAGE} as recommend_stage

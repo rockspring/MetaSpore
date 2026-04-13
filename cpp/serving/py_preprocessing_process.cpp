@@ -15,16 +15,17 @@
 //
 
 #include <filesystem>
-#include <boost/process/system.hpp>
-#include <boost/process/pipe.hpp>
-#include <boost/process/io.hpp>
+#include <boost/process/v1/system.hpp>
+#include <boost/process/v1/pipe.hpp>
+#include <boost/process/v1/io.hpp>
+#include <boost/process/v1/child.hpp>
 #include <metaspore/string_utils.h>
 #include <serving/py_preprocessing_process.h>
 
 namespace metaspore::serving {
 
 status PyPreprocessingProcess::launch() {
-    namespace bp = boost::process;
+    namespace bp = boost::process::v1;
     namespace fs = std::filesystem;
     int rc = bp::system(python_executable_, "-m", "venv", virtual_env_dir_);
     if (rc != 0)

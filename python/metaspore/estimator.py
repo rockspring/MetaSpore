@@ -113,7 +113,9 @@ class PyTorchAgent(Agent):
     @classmethod
     def _distribute_module(cls, module, model_export_selector, _):
         buf = io.BytesIO(module)
-        module = torch.load(buf)
+        # PyTorch 2.6+ defaults to weights_only=True, which breaks
+        # loading cloudpickle-serialized full modules.
+        module = torch.load(buf, weights_only=False)
         self = __class__.get_instance()
         self.module = module
         self.model_export_selector = model_export_selector

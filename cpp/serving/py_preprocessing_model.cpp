@@ -16,14 +16,15 @@
 
 #include <filesystem>
 #include <boost/dll/runtime_symbol_info.hpp>
-#include <boost/process/search_path.hpp>
+#include <boost/process/v1/search_path.hpp>
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
-#include <agrpc/asioGrpc.hpp>
+#include <agrpc/asio_grpc.hpp>
 #include <grpcpp/client_context.h>
 #include <grpcpp/create_channel.h>
 #include <fmt/format.h>
+#include <fmt/ranges.h>
 #include <common/logger.h>
 #include <common/threadpool.h>
 #include <common/utils.h>
@@ -63,7 +64,7 @@ awaitable_status PyPreprocessingModel::load(std::string dir_path) {
             }
 
             // set Python executable
-            auto py_path = boost::process::search_path("python");
+            auto py_path = boost::process::v1::search_path("python");
             if (py_path.empty()) {
                 co_return absl::NotFoundError("PyPreprocessingModel cannot find the Python interpreter");
             }
@@ -74,7 +75,7 @@ awaitable_status PyPreprocessingModel::load(std::string dir_path) {
             auto temp_dir = std::filesystem::temp_directory_path() / uuid;
             if (!std::filesystem::create_directory(temp_dir)) {
                 co_return absl::FailedPreconditionError(
-                    fmt::format("PyPreprocessingModel cannot create temp dir {}", temp_dir));
+                    fmt::format("PyPreprocessingModel cannot create temp dir {}", temp_dir.string()));
             }
             context_->temp_dir_ = temp_dir;
             auto venv_dir = temp_dir / "venv";
@@ -91,7 +92,7 @@ awaitable_status PyPreprocessingModel::load(std::string dir_path) {
             auto service_script = (prog_dir / "preprocessor_service.py").string();
             if (!std::filesystem::exists(service_script)) {
                 co_return absl::NotFoundError(fmt::format(
-                    "PyPreprocessingModel cannot find preprocessor service script {}", service_script));
+                    "PyPreprocessingModel cannot find preprocessor service script {}", std::string(service_script)));
             }
             context_->process_.set_service_script_file(service_script);
 
@@ -99,7 +100,7 @@ awaitable_status PyPreprocessingModel::load(std::string dir_path) {
             auto preprocessor_script = p / "preprocessor.py";
             if (!std::filesystem::exists(preprocessor_script)) {
                 co_return absl::NotFoundError(fmt::format(
-                    "PyPreprocessingModel cannot find preprocessor script {}", preprocessor_script));
+                    "PyPreprocessingModel cannot find preprocessor script {}", preprocessor_script.string()));
             }
             context_->process_.set_preprocessor_config_dir(dir_path);
 
@@ -129,9 +130,8 @@ PyPreprocessingModel::do_predict(std::unique_ptr<PyPreprocessingModelInput> inpu
     auto output = std::make_unique<PyPreprocessingModelOutput>();
     grpc::ClientContext client_context;
     agrpc::GrpcContext& grpc_context = GrpcClientContextPool::get_instance().get_next();
-    grpc::Status status;
-    const auto reader = agrpc::request(&Predict::Stub::AsyncPredict, *context_->stub_, client_context, input->request, grpc_context);
-    co_await agrpc::finish(reader, output->reply, status, boost::asio::bind_executor(grpc_context, boost::asio::use_awaitable));
+    using PredictClientRPC = agrpc::ClientRPC<&Predict::Stub::PrepareAsyncPredict>;
+    grpc::Status status = co_await PredictClientRPC::request(grpc_context, *context_->stub_, client_context, input->request, output->reply, boost::asio::use_awaitable);
     if (!status.ok())
         co_return absl::FailedPreconditionError(fmt::format("preprocessing failed: {}", status.error_message()));
     co_return output;

@@ -56,10 +56,10 @@ add_library(metaspore-common STATIC
     ${PROTO_SRCS}
 )
 
-target_compile_options(metaspore-common PRIVATE
-    -funroll-loops
-    -march=core-avx2
-)
+target_compile_options(metaspore-common PRIVATE -funroll-loops)
+if(METASPORE_CPU_MARCH_FLAG)
+    target_compile_options(metaspore-common PRIVATE ${METASPORE_CPU_MARCH_FLAG})
+endif()
 
 target_compile_definitions(metaspore-common PUBLIC
     XTENSOR_GLIBCXX_USE_CXX11_ABI=1
@@ -75,4 +75,5 @@ target_link_libraries(metaspore-common PUBLIC
     gflags
     xtensor
     libarrow
+    libarrow_acero
 )

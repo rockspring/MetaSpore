@@ -1,12 +1,5 @@
 {
-    "registries": [
-        {
-            "kind": "git",
-            "repository": "https://github.com/meta-soul/meta-vcpkg-registry.git",
-            "baseline": "0325e8af8680eb5c656317ff84c34743465ad033",
-            "packages": [
-                "onnxruntime-gpu-default"
-            ]
-        }
+    "overlay-ports": [
+        "./overlay-ports"
     ]
 }

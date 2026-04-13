@@ -14,10 +14,7 @@
 # limitations under the License.
 #
 
-find_path(ORT_CPU_INCLUDE_DIR onnxruntime_cxx_api.h)
-find_library(ORT_CPU_LIBRARY onnxruntime)
+find_package(onnxruntime CONFIG REQUIRED)
 
-add_library( onnxruntime-cpu-default SHARED IMPORTED )
-set_property(TARGET onnxruntime-cpu-default PROPERTY
-             IMPORTED_LOCATION ${ORT_CPU_LIBRARY})
-target_include_directories(onnxruntime-cpu-default INTERFACE ${ORT_CPU_INCLUDE_DIR})
+add_library(onnxruntime-cpu-default INTERFACE IMPORTED)
+target_link_libraries(onnxruntime-cpu-default INTERFACE onnxruntime::onnxruntime)

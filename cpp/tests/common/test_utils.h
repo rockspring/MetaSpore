@@ -47,7 +47,7 @@ int run_all_tests(int argc, char **argv) {
     SpdlogDefault::Init();
     auto status = RegisterCustomArrowFunctions();
     if (!status.ok()) {
-        fmt::print(stderr, "register arrow functions failed {}\n", status);
+        fmt::print(stderr, "register arrow functions failed {}\n", status.ToString());
         return 1;
     }
     testing::InitGoogleTest(&argc, argv);

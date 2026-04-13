@@ -52,10 +52,10 @@ target_include_directories(metaspore-serving PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp
 )
 
-target_compile_options(metaspore-serving PUBLIC
-    -funroll-loops
-    -march=core-avx2
-)
+target_compile_options(metaspore-serving PUBLIC -funroll-loops)
+if(METASPORE_CPU_MARCH_FLAG)
+    target_compile_options(metaspore-serving PUBLIC ${METASPORE_CPU_MARCH_FLAG})
+endif()
 
 target_link_libraries(metaspore-serving PUBLIC
     metaspore-common
@@ -84,13 +84,17 @@ endif()
 set_target_properties(metaspore-serving-bin PROPERTIES
         LINK_FLAGS "-Wl,-rpath,$ORIGIN/")
 
-add_custom_command(TARGET metaspore-serving-bin
-    POST_BUILD
-    COMMAND ldd ${CMAKE_CURRENT_BINARY_DIR}/metaspore-serving-bin |
-            egrep -v 'linux-vdso|ld-linux-x86-64|libpthread|libdl|libm|libc|librt' |
-            cut -f 3 -d ' ' |
-            xargs -L 1 -I so_file cp -n so_file ${CMAKE_CURRENT_BINARY_DIR}/
-)
+# Bundle non-glibc shared libraries next to the serving binary (Linux packaging).
+# macOS has no ldd(1); rely on rpath / install_name_tool instead.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_custom_command(TARGET metaspore-serving-bin
+        POST_BUILD
+        COMMAND ldd ${CMAKE_CURRENT_BINARY_DIR}/metaspore-serving-bin |
+                egrep -v 'linux-vdso|ld-linux-x86-64|libpthread|libdl|libm|libc|librt' |
+                cut -f 3 -d ' ' |
+                xargs -L 1 -I so_file cp -n so_file ${CMAKE_CURRENT_BINARY_DIR}/
+    )
+endif()
 
 if(ENABLE_GPU)
     get_filename_component(ORT_GPU_LIB_DIR ${ORT_GPU_LIBRARY} DIRECTORY)
@@ -105,16 +109,15 @@ if(ENABLE_GPU)
     )
 endif()
 
-find_package(Python REQUIRED COMPONENTS Interpreter Development)
-message("Found Python at " ${Python_EXECUTABLE})
-
+# Python gRPC stubs: use vcpkg protoc + grpc_python_plugin (no grpcio-tools in the active Python env).
 add_custom_command(TARGET metaspore-serving-bin
     POST_BUILD
-    COMMAND ${Python_EXECUTABLE} -m grpc.tools.protoc
-            -I=${CMAKE_CURRENT_SOURCE_DIR}/protos
-            --python_out=${CMAKE_CURRENT_BINARY_DIR}
-            --grpc_python_out=${CMAKE_CURRENT_BINARY_DIR}
-            ${CMAKE_CURRENT_SOURCE_DIR}/protos/metaspore.proto
+    COMMAND "$<TARGET_FILE:protobuf::protoc>"
+            "-I" "${CMAKE_CURRENT_SOURCE_DIR}/protos"
+            "--python_out=${CMAKE_CURRENT_BINARY_DIR}"
+            "--grpc_python_out=${CMAKE_CURRENT_BINARY_DIR}"
+            "--plugin=protoc-gen-grpc_python=$<TARGET_FILE:gRPC::grpc_python_plugin>"
+            "${CMAKE_CURRENT_SOURCE_DIR}/protos/metaspore.proto"
 )
 
 add_custom_command(TARGET metaspore-serving-bin

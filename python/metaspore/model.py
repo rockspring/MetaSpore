@@ -481,8 +481,9 @@ class Model(object):
 
         torch.onnx.export(script, args_parameter,
                           fout, input_names=name_list, output_names=output_names,
+                          dynamo=False,
                           dynamic_axes=dynamic_axes_parameter,
-                          opset_version=14,
+                          opset_version=18,
                           verbose=True)
 
     def export(self, path, *, model_export_selector=None, output_names=None):

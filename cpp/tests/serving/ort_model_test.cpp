@@ -88,7 +88,7 @@ TEST(ORT_MODEL_TEST_SUITE, TestOrtModelLoadNormal) {
     std::future<void> future = boost::asio::co_spawn(
         tp,
         []() -> awaitable<void> {
-            OrtModel model;
+            metaspore::serving::OrtModel model;
             auto status = co_await model.load("mnist_model");
             EXPECT_TRUE_COROUTINE(status);
             auto info = model.info();

@@ -67,13 +67,14 @@ class EmbeddingBagModule(torch.nn.Module):
                         fout,
                         input_names=["input", "weight", "offsets", "batch_size"],
                         output_names= [name],
+                        dynamo=False,
                         dynamic_axes={
                             "input": {0: "input_num"},
                             "weight": {0: "emb_vec_num"},
                             "offsets": {0: "offset_num"}
                         },
                         verbose=True,
-                        opset_version=14)
+                        opset_version=18)
 
 class EmbeddingOperator(torch.nn.Module):
     def __init__(self,
@@ -467,7 +468,17 @@ class EmbeddingOperator(torch.nn.Module):
     @torch.jit.unused
     def _combine_to_indices_and_offsets(self, minibatch, feature_offset):
         import pyarrow as pa
-        batch = pa.RecordBatch.from_pandas(minibatch)
+        # Spark 4/Arrow may materialize text columns as large_string, while
+        # bkdr_hash currently expects regular string inputs.
+        # Build the RecordBatch explicitly with pa.string() to stabilize types.
+        arrays = []
+        names = []
+        for name in minibatch.columns:
+            series = minibatch[name]
+            values = series.astype(object).where(series.notna(), '')
+            arrays.append(pa.array(values.tolist(), type=pa.string()))
+            names.append(name)
+        batch = pa.RecordBatch.from_arrays(arrays, names=names)
         indices, offsets = self._feature_extractor.extract(batch)
         if not feature_offset:
             offsets = offsets[::self.feature_count]
